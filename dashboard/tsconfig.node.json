@@ -8,6 +8,7 @@
     "skipLibCheck": true,
     "strict": true,
     "isolatedModules": true,
+    "types": ["node"],
     "outDir": "./.tsbuild-node"
   },
   "include": ["vite.config.ts"]

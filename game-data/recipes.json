@@ -6,6 +6,50 @@
     "military-science-pack": 2,
     "copper-cable": 2
   },
+  "_craftTimes": "Vanilla 1.1 recipe energy_required (seconds). Used to compute per-machine potential rate from craftingSpeed in machineProduction.json. Add entries here for any recipe surfaced as a 'rate' row.",
+  "craftTimes": {
+    "copper-plate": 3.2,
+    "iron-plate": 3.2,
+    "stone-brick": 3.2,
+    "steel-plate": 16,
+    "plastic-bar": 1,
+    "sulfur": 1,
+    "battery": 4,
+    "explosives": 4,
+    "iron-stick": 0.5,
+    "iron-gear-wheel": 0.5,
+    "copper-cable": 0.5,
+    "electronic-circuit": 0.5,
+    "advanced-circuit": 6,
+    "processing-unit": 10,
+    "low-density-structure": 20,
+    "rocket-fuel": 30,
+    "engine-unit": 10,
+    "electric-engine-unit": 10,
+    "flying-robot-frame": 20,
+    "rail": 0.5,
+    "electric-furnace": 5,
+    "productivity-module": 15,
+    "productivity-module-2": 30,
+    "productivity-module-3": 60,
+    "speed-module": 15,
+    "speed-module-2": 30,
+    "speed-module-3": 60,
+    "automation-science-pack": 5,
+    "logistic-science-pack": 6,
+    "military-science-pack": 10,
+    "chemical-science-pack": 24,
+    "production-science-pack": 21,
+    "utility-science-pack": 21,
+    "basic-oil-processing": 5,
+    "advanced-oil-processing": 5,
+    "heavy-oil-cracking": 2,
+    "light-oil-cracking": 2,
+    "solid-fuel-from-light-oil": 2,
+    "solid-fuel-from-petroleum-gas": 2,
+    "solid-fuel-from-heavy-oil": 2,
+    "lubricant": 1
+  },
   "endGameDisplay": [
     { "recipe": "processing-unit",         "label": "Blue chips",     "color": "#2756c8" },
     { "recipe": "low-density-structure",   "label": "LDS",            "color": "#c5cad0" },
@@ -42,6 +86,23 @@
       { "key": "speed-module-cum",             "group": "rc-modules",   "recipe": "speed-module",            "label": "Speed module 1",             "color": "#1d5cb5", "mode": "cum" },
       { "key": "chemical-science-rate",        "group": "blue-science", "recipe": "chemical-science-pack",   "label": "Blue science (rate)",        "color": "#3aa8f0", "mode": "rate" },
       { "key": "chemical-science-cum",         "group": "blue-science", "recipe": "chemical-science-pack",   "label": "Blue science (cumulative)",  "color": "#3aa8f0", "mode": "cum" }
+    ]
+  },
+  "fullBuildDisplay": {
+    "groups": [
+      { "id": "purple", "label": "Purple" },
+      { "id": "yellow", "label": "Yellow" }
+    ],
+    "rows": [
+      { "key": "yellow-rate",       "group": "yellow", "recipe": "utility-science-pack",    "label": "Yellow science (rate)",        "color": "#f2c94f", "mode": "rate" },
+      { "key": "yellow-cum",        "group": "yellow", "recipe": "utility-science-pack",    "label": "Yellow science (cumulative)",  "color": "#f2c94f", "mode": "cum"  },
+
+      { "key": "purple-rate",       "group": "purple", "recipe": "production-science-pack", "label": "Purple science (rate)",        "color": "#b14df5", "mode": "rate" },
+      { "key": "purple-cum",        "group": "purple", "recipe": "production-science-pack", "label": "Purple science (cumulative)",  "color": "#b14df5", "mode": "cum"  },
+      { "key": "rail-rate",         "group": "purple", "recipe": "rail",                    "label": "Rail",                         "color": "#a78bfa", "mode": "rate" },
+      { "key": "electric-furnace-rate", "group": "purple", "recipe": "electric-furnace",    "label": "Electric furnaces",            "color": "#9333ea", "mode": "rate" },
+      { "key": "prod-module-buffer","group": "purple", "recipe": "productivity-module",     "label": "Productivity modules (chest only)", "color": "#dd2e6f", "mode": "buffer", "excludeInventory": true },
+      { "key": "back-steel-rate",   "group": "purple", "recipe": "steel-plate",             "label": "Steel (back side)",            "color": "#94a3b8", "mode": "rate", "machineFilter": "after-full-build-start" }
     ]
   }
 }

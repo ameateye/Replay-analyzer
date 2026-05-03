@@ -19,6 +19,7 @@ import { computePhases, computeRocketLaunchTick } from './phase-boundaries.mjs';
 import { buildEndGameProduction } from './end-game-production-prep.mjs';
 import { buildMixedSegment } from './end-game/mixed-segment.mjs';
 import { buildOilPhase } from './oil-phase-prep.mjs';
+import { buildFullBuildPhase } from './full-build-prep.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_ROOT = path.resolve(__dirname, '..');
@@ -74,6 +75,7 @@ const peakLabs = points.reduce((m, p) => Math.max(m, p.total ?? 0), 0);
 const endGame = buildEndGameProduction(runDir, rocketLaunchTick);
 const mixedSegment = buildMixedSegment(runDir, phases, rocketLaunchTick);
 const oilPhase = buildOilPhase(runDir, rocketLaunchTick, phases);
+const fullBuildPhase = buildFullBuildPhase(runDir, rocketLaunchTick, phases);
 
 const output = {
   runName,
@@ -88,6 +90,7 @@ const output = {
   phases,
   mixedSegment,
   oilPhase,
+  fullBuildPhase,
   endGame,
 };
 
@@ -126,5 +129,8 @@ if (mixedSegment) {
 }
 if (oilPhase) {
   console.log(`  oil phase rows: ${oilPhase.rows.map(r => `${r.key} (${r.mode})`).join(', ')}`);
+}
+if (fullBuildPhase) {
+  console.log(`  full-build rows: ${fullBuildPhase.rows.map(r => `${r.key} (${r.mode})`).join(', ')}`);
 }
 console.log(`Wrote ${outPath} (${sizeKB} KB)`);

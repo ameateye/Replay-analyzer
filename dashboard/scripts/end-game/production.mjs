@@ -5,6 +5,17 @@
 // Per-period losses are scaled so their sum equals max(0, potential − actual);
 // without this, smoothing + items-already-in-flight clamping drift the stack
 // top above the explicit potential line during stall edges.
+//
+// Potential rate per machine: when game-data carries the recipe's craftTime,
+// we compute it directly as
+//     items/period = craftingSpeed × (1 + prodBonus) / craftTime × periodSec × outputCount
+// using the craftingSpeed and productivityBonus the data collector captured at
+// run start. That's strictly better than inferring from samples — heuristic
+// inference fails for slow / output-throttled recipes (e.g. electric-furnace,
+// where almost every cycle completes on a 'full_output' sample, so no
+// 'working' streak exceeds the threshold and the inferred rate collapses to
+// 0). The empirical-streak path remains as a fallback for any recipe missing
+// from craftTimes.
 
 const LOSS_STATUS_ORDER = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
 const SMOOTH_HALF_WINDOW = 12; // ±12 periods × 5 s ≈ ±1 min
@@ -28,11 +39,27 @@ function smoothMap(map, halfWindow) {
 }
 
 // For each (machine × recipe) instance, returns the steady-state items/period
-// rate, computed from the longest contiguous 'working' stretch (items / N).
-// Stretches < 20 periods fall back to a global average — short bursts include
-// partial cycles whose progress never lands and would under-estimate.
-function computePerRunRates(mpFile, recipe, outputCount) {
+// rate. Two estimators run in parallel and the per-machine MAX wins:
+//
+//   1. craftTime estimator (when game-data has the recipe's craftTime):
+//      rate = craftingSpeed × (1 + prodBonus) / craftTime × periodSec × outputCount.
+//      Exact when the data collector captured the final machine config.
+//      Under-estimates when later module/beacon changes weren't observed
+//      (the captured speed/prod can lag the entity's true effective speed).
+//
+//   2. Empirical heuristic: longest contiguous 'working' stretch, items/N.
+//      Stretches < 20 periods fall back to a global average. Catches
+//      hidden module/beacon contributions that estimator 1 missed.
+//      Returns 0 for output-throttled recipes whose cycles always land on
+//      'full_output' samples (e.g. electric-furnace) — covered by
+//      estimator 1 in that case.
+//
+// The max is conservative for "potential": it bounds the upper end of what
+// the machine actually achieved. Using max also avoids spurious
+// actual > potential rendering when one estimator under-shoots.
+function computePerRunRates(mpFile, recipe, outputCount, craftTime) {
   const period = mpFile.period;
+  const periodSec = period / 60;
 
   const runs = [];
   for (const machine of mpFile.machines) {
@@ -47,13 +74,31 @@ function computePerRunRates(mpFile, recipe, outputCount) {
         if (Array.isArray(p[5])) sample[4] = p[5];
         samples.set(p[0], sample);
       }
-      runs.push({ machineType: machine.name, samples });
+      runs.push({
+        machineType: machine.name,
+        craftingSpeed: r.craftingSpeed ?? 1,
+        productivityBonus: r.productivityBonus ?? 0,
+        samples,
+      });
     }
   }
 
+  // Estimator 1: craftTime-based per-machine rate.
+  const craftTimeRate = new Map();
+  if (craftTime != null && craftTime > 0) {
+    for (const run of runs) {
+      craftTimeRate.set(
+        run,
+        (run.craftingSpeed * (1 + run.productivityBonus) / craftTime) * periodSec * outputCount,
+      );
+    }
+  }
+
+  // Estimator 2: heuristic peak-streak rate, with global fallback for runs
+  // that never reach the 20-period working threshold.
   let bestGlobalItems = 0;
   let bestGlobalPeriods = 0;
-  const runRate = new Map();
+  const heuristicRate = new Map();
   for (const run of runs) {
     const ticks = [...run.samples.keys()].sort((a, b) => a - b);
     let bestItems = 0, bestPeriods = 0, curItems = 0, curPeriods = 0;
@@ -76,7 +121,7 @@ function computePerRunRates(mpFile, recipe, outputCount) {
     }
     if (curPeriods > bestPeriods) { bestItems = curItems; bestPeriods = curPeriods; }
     if (bestPeriods >= 20) {
-      runRate.set(run, bestItems / bestPeriods);
+      heuristicRate.set(run, bestItems / bestPeriods);
       if (bestPeriods > bestGlobalPeriods) {
         bestGlobalPeriods = bestPeriods;
         bestGlobalItems = bestItems;
@@ -84,15 +129,22 @@ function computePerRunRates(mpFile, recipe, outputCount) {
     }
   }
   const fallback = bestGlobalPeriods > 0 ? bestGlobalItems / bestGlobalPeriods : 0;
-  for (const run of runs) if (!runRate.has(run)) runRate.set(run, fallback);
+  for (const run of runs) if (!heuristicRate.has(run)) heuristicRate.set(run, fallback);
 
+  // Combine: per-machine max of the two estimators.
+  const runRate = new Map();
+  for (const run of runs) {
+    const c = craftTimeRate.get(run) ?? 0;
+    const h = heuristicRate.get(run) ?? 0;
+    runRate.set(run, Math.max(c, h));
+  }
   return { runs, runRate };
 }
 
-export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1) {
+export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1, craftTime = null) {
   const period = mpFile.period;
   const ratePerMinFactor = 60 / (period / 60);
-  const { runs, runRate } = computePerRunRates(mpFile, recipe, outputCount);
+  const { runs, runRate } = computePerRunRates(mpFile, recipe, outputCount, craftTime);
 
   // Per-grid raw arrays (still in items/period; we'll convert to /min later).
   const actualPP    = new Array(gridTicks.length).fill(0);

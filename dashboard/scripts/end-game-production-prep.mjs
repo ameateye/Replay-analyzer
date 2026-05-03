@@ -28,10 +28,11 @@ const RECIPES_GAME_DATA = JSON.parse(fs.readFileSync(RECIPES_PATH, 'utf8'));
 // of machines (e.g. only the copper smelters built during the Mixed phase).
 export function buildRecipeRow(mp, buf, inv, recipe, gridTicks, machineFilter = null) {
   const outputCount = RECIPES_GAME_DATA.outputCount[recipe] ?? 1;
+  const craftTime = RECIPES_GAME_DATA.craftTimes?.[recipe] ?? null;
   const mpForRate = machineFilter
     ? { ...mp, machines: mp.machines.filter(machineFilter) }
     : mp;
-  const rate = buildProductionSeries(mpForRate, recipe, gridTicks, outputCount);
+  const rate = buildProductionSeries(mpForRate, recipe, gridTicks, outputCount, craftTime);
   const buffer = buildBufferSeries(buf, recipe, gridTicks);
   const player = buildPlayerInventorySeries(inv, recipe, gridTicks);
   const bufferWithInv = buffer.buffer.map((b, i) => b + player.inv[i]);

@@ -5,9 +5,10 @@ import type { ComponentType } from 'react';
 import type { Run } from '../data';
 import { OilPhaseWidget } from './OilPhaseWidget';
 import { MixedSegmentWidget } from './MixedSegmentWidget';
+import { FullBuildWidget } from './FullBuildWidget';
 import { EndGameWidgets } from './EndGameWidgets';
 
-type RunDataKey = 'oilPhase' | 'mixedSegment' | 'endGame';
+type RunDataKey = 'oilPhase' | 'mixedSegment' | 'fullBuildPhase' | 'endGame';
 
 export type PhaseWidgetEntry = {
   dataKey: RunDataKey;
@@ -15,9 +16,10 @@ export type PhaseWidgetEntry = {
 };
 
 export const PHASE_WIDGETS: Record<string, PhaseWidgetEntry> = {
-  'Oil':       { dataKey: 'oilPhase',     Widget: OilPhaseWidget },
-  'Mixed':     { dataKey: 'mixedSegment', Widget: MixedSegmentWidget },
-  'Late game': { dataKey: 'endGame',      Widget: EndGameWidgets },
+  'Oil':        { dataKey: 'oilPhase',       Widget: OilPhaseWidget       },
+  'Mixed':      { dataKey: 'mixedSegment',   Widget: MixedSegmentWidget   },
+  'Full build': { dataKey: 'fullBuildPhase', Widget: FullBuildWidget      },
+  'Late game':  { dataKey: 'endGame',        Widget: EndGameWidgets       },
 };
 
 export function hasPhaseWidget(run: Run, name: string): boolean {

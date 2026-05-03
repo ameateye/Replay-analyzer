@@ -107,7 +107,8 @@ function buildCombinedRow(mp, gridTicks, display, componentCfgs, N) {
   const outputCounts = mp ? null : null; // suppress unused-var lint; outputCount lookup happens per component
   const components = componentCfgs.map(c => {
     const outputCount = RECIPES_GAME_DATA.outputCount[c.recipe] ?? 1;
-    const series = buildProductionSeries(mp, c.recipe, gridTicks, outputCount);
+    const craftTime = RECIPES_GAME_DATA.craftTimes?.[c.recipe] ?? null;
+    const series = buildProductionSeries(mp, c.recipe, gridTicks, outputCount, craftTime);
     return {
       recipe: c.recipe,
       label: c.label,

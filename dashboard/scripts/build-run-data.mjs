@@ -4,6 +4,10 @@
 // dashboard needs, and writes a compact JSON to src/data/<run>.json. Run
 // before dev / build (npm scripts wire it).
 //
+// Game-data (tech icons, tech requirements) is intentionally NOT baked in:
+// it lives behind /game-data/* and is loaded once at runtime by the React app
+// so it can be reused across runs and across charts.
+//
 // Usage:  node scripts/build-run-data.mjs <run-dir>
 //   <run-dir> may be absolute, or relative to dashboard/.
 
@@ -24,14 +28,14 @@ if (!argRun) {
   process.exit(1);
 }
 const runDir = path.resolve(DASHBOARD_ROOT, argRun);
+// Tech requirements are still consumed at build time (the saturation
+// computation needs them per tick) but never emitted into the per-run JSON.
 const techReqPath = path.join(REPO_ROOT, 'game-data', 'factorio-tech-requirements.json');
-const techIconsPath = path.join(REPO_ROOT, 'game-data', 'factorio-tech-icons.json');
 
 const runName = path.basename(runDir).replace(/^Actual-/, '');
 
 console.log(`Building dashboard data for run "${runName}" from ${runDir}`);
 
-const techIcons = JSON.parse(fs.readFileSync(techIconsPath, 'utf8')).icons;
 const lab = prepareLabSaturationData(runDir, techReqPath);
 const phases = computePhases(runDir);
 const rocketLaunchTick = computeRocketLaunchTick(runDir);
@@ -60,8 +64,6 @@ const researchIntervals = lab.researchIntervals
     name: iv.name,
     startMin: +iv.startMin.toFixed(4),
     endMin: +Math.min(iv.endMin, rocketLaunchMin).toFixed(4),
-    requiredPacks: iv.requiredPacks,
-    iconUrl: techIcons[iv.name] ?? null,
   }));
 
 const peakActiveLabs = points.reduce((m, p) => Math.max(m, p.active ?? 0), 0);

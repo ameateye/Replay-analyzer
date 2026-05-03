@@ -1,7 +1,7 @@
 {
   "repoPath": "<absolute path to your clone of factorio-replay-data-collection>",
   "controlLuaPath": "<absolute path>/factorio-replay-data-collection/out/control.lua",
-  "downloadsFolder": "C:/Users/<you>/Downloads",
+  "externalSavesFolder": "<wherever you store .zip saves you've received from elsewhere>",
   "factorioSavesFolder": "C:/Users/<you>/AppData/Roaming/Factorio/saves",
   "factorioScriptOutput": "C:/Users/<you>/AppData/Roaming/Factorio/script-output",
   "extractedDataFolder": "<absolute path to this repo>/extracted-data"

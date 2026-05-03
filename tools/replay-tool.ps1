@@ -6,16 +6,17 @@
     Subcommands:
       install <save>            Inject the built control.lua into a Factorio save zip and
                                 copy the modified save into the Factorio saves folder.
-                                <save> can be a full path, a filename in Downloads, or a
-                                glob pattern matched against Downloads.
+                                <save> can be a full path, a filename in the
+                                external-saves folder (config: externalSavesFolder),
+                                or a glob pattern matched against that folder.
       build                     Run `npm run build` in the repo to regenerate out/control.lua.
       extract <name> [save]     Move all *.json files from Factorio's script-output folder
                                 into extracted-data/<name>/. If [save] is given, also delete
                                 that save from the Factorio saves folder afterwards.
       clean <save>              Delete a save from the Factorio saves folder. <save> can be
-                                a filename (with or without .zip) or a glob. Original saves
-                                in Downloads are never touched.
-      list-saves [pat]          List zip files in the Downloads folder, optionally filtered.
+                                a filename (with or without .zip) or a glob. The original
+                                save in externalSavesFolder is never touched.
+      list-saves [pat]          List zip files in externalSavesFolder, optionally filtered.
       list-installed            List saves currently in the Factorio saves folder.
       config                    Print the resolved configuration.
 
@@ -55,7 +56,7 @@ function Get-Config {
         throw "Config file not found at $configPath"
     }
     $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
-    foreach ($p in @('repoPath', 'controlLuaPath', 'downloadsFolder', 'factorioSavesFolder', 'factorioScriptOutput', 'extractedDataFolder')) {
+    foreach ($p in @('repoPath', 'controlLuaPath', 'externalSavesFolder', 'factorioSavesFolder', 'factorioScriptOutput', 'extractedDataFolder')) {
         if (-not $cfg.PSObject.Properties.Name.Contains($p)) {
             throw "Config is missing required key: $p"
         }
@@ -64,7 +65,7 @@ function Get-Config {
 }
 
 function Resolve-SaveInput {
-    param([string]$InputArg, [string]$DownloadsFolder)
+    param([string]$InputArg, [string]$ExternalSavesFolder)
 
     if ([string]::IsNullOrWhiteSpace($InputArg)) {
         throw "install requires a save argument (path, filename, or glob)"
@@ -74,21 +75,21 @@ function Resolve-SaveInput {
         return (Resolve-Path -LiteralPath $InputArg).Path
     }
 
-    $candidate = Join-Path $DownloadsFolder $InputArg
+    $candidate = Join-Path $ExternalSavesFolder $InputArg
     if (Test-Path -LiteralPath $candidate -PathType Leaf) {
         return (Resolve-Path -LiteralPath $candidate).Path
     }
 
-    $matches = @(Get-ChildItem -Path $DownloadsFolder -Filter $InputArg -File -ErrorAction SilentlyContinue)
+    $matches = @(Get-ChildItem -Path $ExternalSavesFolder -Filter $InputArg -File -ErrorAction SilentlyContinue)
     if ($matches.Count -eq 1) {
         return $matches[0].FullName
     }
     if ($matches.Count -gt 1) {
-        Write-Host "Multiple matches in Downloads:" -ForegroundColor Yellow
+        Write-Host "Multiple matches in $ExternalSavesFolder :" -ForegroundColor Yellow
         $matches | ForEach-Object { Write-Host "  $($_.Name)" }
         throw "Be more specific."
     }
-    throw "Save not found: '$InputArg' (checked literal path and $DownloadsFolder)"
+    throw "Save not found: '$InputArg' (checked literal path and $ExternalSavesFolder)"
 }
 
 function Resolve-FactorioSave {
@@ -185,7 +186,7 @@ function Invoke-Install {
         throw "control.lua not found at $($Config.controlLuaPath). Run: replay-tool.ps1 build"
     }
 
-    $sourceZip = Resolve-SaveInput -InputArg $SaveArg -DownloadsFolder $Config.downloadsFolder
+    $sourceZip = Resolve-SaveInput -InputArg $SaveArg -ExternalSavesFolder $Config.externalSavesFolder
     $destZip   = Join-Path $Config.factorioSavesFolder ([System.IO.Path]::GetFileName($sourceZip))
 
     if (-not (Test-Path -LiteralPath $Config.factorioSavesFolder)) {
@@ -286,7 +287,7 @@ function Invoke-ListInstalled {
 function Invoke-ListSaves {
     param([string]$Pattern, [object]$Config)
     if ([string]::IsNullOrWhiteSpace($Pattern)) { $Pattern = '*.zip' }
-    Get-ChildItem -Path $Config.downloadsFolder -Filter $Pattern -File |
+    Get-ChildItem -Path $Config.externalSavesFolder -Filter $Pattern -File |
         Sort-Object LastWriteTime -Descending |
         Select-Object Name, @{n='SizeMB';e={[math]::Round($_.Length/1MB,1)}}, LastWriteTime |
         Format-Table -AutoSize

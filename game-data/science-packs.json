@@ -1,0 +1,20 @@
+{
+  "tierOrder": [
+    "automation-science-pack",
+    "logistic-science-pack",
+    "military-science-pack",
+    "chemical-science-pack",
+    "production-science-pack",
+    "utility-science-pack",
+    "space-science-pack"
+  ],
+  "displayMeta": {
+    "automation-science-pack": { "color": "#c8312a", "short": "automation" },
+    "logistic-science-pack":   { "color": "#5cb834", "short": "logistic" },
+    "military-science-pack":   { "color": "#3a3a3a", "short": "military" },
+    "chemical-science-pack":   { "color": "#3aa8f0", "short": "chemical" },
+    "production-science-pack": { "color": "#b14df5", "short": "production" },
+    "utility-science-pack":    { "color": "#f2c94f", "short": "utility" },
+    "space-science-pack":      { "color": "#d8d8d8", "short": "space" }
+  }
+}

@@ -1,10 +1,8 @@
 import { useState, type RefObject } from 'react';
 import type { ScaleLinear } from 'd3-scale';
-import type { Run } from '../data';
+import type { ResearchInterval } from '../server/gameData';
 import { COLORS, FONT, PACK_COLOR, PACK_SHORT, fmtTime } from '../theme';
 import { containerXY, type TooltipState } from './Tooltip';
-
-type ResearchInterval = Run['researchIntervals'][number];
 
 type Props = {
   innerW: number;

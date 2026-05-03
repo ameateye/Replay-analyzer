@@ -1,0 +1,22 @@
+{
+  "baseMachineTypes": [
+    "assembling-machine-1",
+    "assembling-machine-2",
+    "assembling-machine-3",
+    "oil-refinery",
+    "chemical-plant",
+    "lab",
+    "beacon",
+    "stone-furnace",
+    "steel-furnace",
+    "electric-furnace"
+  ],
+  "phases": [
+    { "name": "Burner",     "color": "#57534e" },
+    { "name": "Front side", "color": "#1d4ed8" },
+    { "name": "Oil",        "color": "#b45309" },
+    { "name": "Mixed",      "color": "#15803d" },
+    { "name": "Full build", "color": "#6b21a8" },
+    { "name": "Late game",  "color": "#b91c1c" }
+  ]
+}

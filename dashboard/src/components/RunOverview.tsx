@@ -11,6 +11,8 @@ import { AxisBottom } from '@visx/axis';
 import { range } from 'd3-array';
 import { run } from '../data';
 import { COLORS, FONT, fmtTimeNoSec } from '../theme';
+import { useGameData } from '../server/GameDataContext';
+import { augmentResearchIntervals } from '../server/gameData';
 import { ResearchRibbon, getRibbonHeight } from './ResearchRibbon';
 import { LabSaturationChart } from './LabSaturationChart';
 import { PhaseBands } from './PhaseBands';
@@ -40,6 +42,12 @@ export function RunOverview() {
   const innerW = W - MARGIN_LEFT - MARGIN_RIGHT;
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
+  const gameData = useGameData();
+
+  const researchIntervals = useMemo(
+    () => augmentResearchIntervals(run.researchIntervals, gameData),
+    [gameData],
+  );
 
   const xScale = useMemo(
     () => scaleLinear<number>({ domain: [0, run.durationMin], range: [0, innerW] }),
@@ -53,7 +61,7 @@ export function RunOverview() {
     [yMax],
   );
 
-  const ribbonH = getRibbonHeight(run.researchIntervals, xScale, run.packsUsed.length);
+  const ribbonH = getRibbonHeight(researchIntervals, xScale, run.packsUsed.length);
 
   const ribbonTop = MARGIN_TOP;
   const plotTop = ribbonTop + ribbonH + RIBBON_TO_PLOT_GAP;
@@ -77,7 +85,7 @@ export function RunOverview() {
             <ResearchRibbon
               innerW={innerW}
               xScale={xScale}
-              researchIntervals={run.researchIntervals}
+              researchIntervals={researchIntervals}
               packsUsed={run.packsUsed}
               containerRef={containerRef}
               setTooltip={setTooltip}
@@ -94,7 +102,7 @@ export function RunOverview() {
               idleRects={run.idleRects}
               packsUsed={run.packsUsed}
               phases={run.phases}
-              researchIntervals={run.researchIntervals}
+              researchIntervals={researchIntervals}
               containerRef={containerRef}
               setTooltip={setTooltip}
             />

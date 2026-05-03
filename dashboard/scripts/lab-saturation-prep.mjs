@@ -7,18 +7,15 @@
 //   <replayDir>/labContents.json
 //   <replayDir>/researchTiming.json
 //   <techReqPath>           game-data/factorio-tech-requirements.json
+//   game-data/science-packs.json (resolved relative to this file)
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 
-export const PACK_TIER_ORDER = [
-  'automation-science-pack',
-  'logistic-science-pack',
-  'military-science-pack',
-  'chemical-science-pack',
-  'production-science-pack',
-  'utility-science-pack',
-  'space-science-pack',
-];
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SCIENCE_PACKS_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'science-packs.json');
+const SCIENCE_PACKS = JSON.parse(fs.readFileSync(SCIENCE_PACKS_PATH, 'utf8'));
+const PACK_TIER_ORDER = SCIENCE_PACKS.tierOrder;
 
 export function prepareLabSaturationData(replayDir, techReqPath) {
   const labFile = JSON.parse(fs.readFileSync(path.join(replayDir, 'labContents.json'), 'utf8'));

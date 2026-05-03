@@ -8,28 +8,20 @@
 //   Full build end   = first utility-science-pack (yellow) production cycle
 //   Late game end    = first rocket launch
 //
-// "Leaving the base" is detected against an axis-aligned bbox of all base machines built so far
-// (assemblers, refineries, chemical plants, labs, beacons, furnaces). A leave event requires
-// the player to remain outside the padded bbox for LEAVE_SUSTAIN_SAMPLES consecutive position
-// samples — this filters out brief train teleports.
+// "Leaving the base" is detected against an axis-aligned bbox of the base
+// machines listed in game-data/build-phases.json (assemblers, refineries,
+// chemical plants, labs, beacons, furnaces). A leave event requires the
+// player to remain outside the padded bbox for LEAVE_SUSTAIN_SAMPLES
+// consecutive position samples — this filters out brief train teleports.
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 
-const COLORS = {
-  Burner: '#57534e',
-  'Front side': '#1d4ed8',
-  Oil: '#b45309',
-  Mixed: '#15803d',
-  'Full build': '#6b21a8',
-  'Late game': '#b91c1c',
-};
-
-const BASE_MACHINE_TYPES = new Set([
-  'assembling-machine-1', 'assembling-machine-2', 'assembling-machine-3',
-  'oil-refinery', 'chemical-plant',
-  'lab', 'beacon',
-  'stone-furnace', 'steel-furnace', 'electric-furnace',
-]);
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const BUILD_PHASES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'build-phases.json');
+const BUILD_PHASES = JSON.parse(fs.readFileSync(BUILD_PHASES_PATH, 'utf8'));
+const BASE_MACHINE_TYPES = new Set(BUILD_PHASES.baseMachineTypes);
+const COLORS = Object.fromEntries(BUILD_PHASES.phases.map(p => [p.name, p.color]));
 
 const LEAVE_PADDING_TILES = 15;
 const LEAVE_SUSTAIN_SAMPLES = 30;

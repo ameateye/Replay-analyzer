@@ -1,0 +1,37 @@
+.run-overview {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.run-overview__header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 14px 22px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.run-overview__header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.run-overview__sub {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.run-overview__chart {
+  width: 100%;
+  position: relative;
+}
+
+.run-overview__chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}

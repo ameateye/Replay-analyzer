@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dashboard/dist/
+*.tsbuildinfo
+
+# Vite / editor
+.vite/
+.DS_Store
+Thumbs.db
+
+# Personal config (use config.example.json as a template)
+config.json
+
+# Run-local data and superseded artifacts (kept on disk, not in the repo)
+extracted-data/
+analysis/
+charts/
+dashboard-mock.html
+
+# Claude Code workspace settings (machine-specific paths)
+.claude/
+
+# Upstream mod-extraction repo — clone separately, see README
+factorio-replay-data-collection/
+
+# Logs
+*.log
+npm-debug.log*

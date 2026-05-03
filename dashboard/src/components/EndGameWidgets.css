@@ -1,0 +1,75 @@
+.end-game {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-top: 18px;
+  overflow: hidden;
+}
+
+.end-game__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px 12px;
+  border-bottom: 1px solid var(--border);
+  gap: 18px;
+}
+
+.end-game__header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.end-game__sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.end-game__tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.end-game__tab {
+  appearance: none;
+  background: var(--surface);
+  border: none;
+  border-left: 1px solid var(--border);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.end-game__tab:first-child {
+  border-left: none;
+}
+
+.end-game__tab:hover {
+  background: #f3f3ef;
+}
+
+.end-game__tab--active {
+  background: #ecedf2;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.end-game__chart {
+  width: 100%;
+  position: relative;
+}
+
+.end-game__chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}

@@ -1,0 +1,996 @@
+{
+  "meta": {
+    "source": "https://raw.githubusercontent.com/wube/factorio-data/2.0.76/base/prototypes/technology.lua",
+    "factorioVersion": "2.0.x (tag 2.0.76)",
+    "generatedAt": "2026-04-29T20:05:39.357Z",
+    "techCount": 193
+  },
+  "technologies": {
+    "advanced-circuit": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "advanced-combinators": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "advanced-material-processing": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "advanced-material-processing-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "advanced-oil-processing": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "artillery": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "artillery-shell-range-1": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "artillery-shell-speed-1": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "atomic-bomb": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "automated-rail-transportation": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "automation": [
+      "automation-science-pack"
+    ],
+    "automation-2": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "automation-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "automation-science-pack": [],
+    "automobilism": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "battery": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "battery-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "battery-mk2-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "belt-immunity-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "braking-force-1": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "braking-force-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "braking-force-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "braking-force-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "braking-force-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "braking-force-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "braking-force-7": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "bulk-inserter": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "chemical-science-pack": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "circuit-network": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "cliff-explosives": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "coal-liquefaction": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "concrete": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "construction-robotics": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "defender": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "destroyer": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "discharge-defense-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "distractor": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "effect-transmission": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "efficiency-module": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "efficiency-module-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "efficiency-module-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "electric-energy-accumulators": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "electric-energy-distribution-1": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "electric-energy-distribution-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "electric-engine": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "electric-mining-drill": [
+      "automation-science-pack"
+    ],
+    "electronics": [],
+    "energy-shield-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "energy-shield-mk2-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "engine": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "exoskeleton-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "explosive-rocketry": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "explosives": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "fast-inserter": [
+      "automation-science-pack"
+    ],
+    "fission-reactor-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "flamethrower": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "flammables": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "fluid-handling": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "fluid-wagon": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "follower-robot-count-1": [],
+    "follower-robot-count-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "gate": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "gun-turret": [
+      "automation-science-pack"
+    ],
+    "heavy-armor": [
+      "automation-science-pack"
+    ],
+    "inserter-capacity-bonus-1": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "inserter-capacity-bonus-2": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "inserter-capacity-bonus-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "inserter-capacity-bonus-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "inserter-capacity-bonus-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "inserter-capacity-bonus-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "inserter-capacity-bonus-7": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "kovarex-enrichment-process": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "lamp": [
+      "automation-science-pack"
+    ],
+    "land-mine": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "landfill": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "laser": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-shooting-speed-1": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-shooting-speed-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-shooting-speed-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-shooting-speed-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-shooting-speed-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "laser-shooting-speed-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "laser-shooting-speed-7": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "laser-turret": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-weapons-damage-1": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-weapons-damage-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-weapons-damage-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-weapons-damage-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "laser-weapons-damage-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "laser-weapons-damage-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "laser-weapons-damage-7": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "logistic-robotics": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "logistic-science-pack": [
+      "automation-science-pack"
+    ],
+    "logistic-system": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "logistics": [
+      "automation-science-pack"
+    ],
+    "logistics-2": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "logistics-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "low-density-structure": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "lubricant": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "military": [
+      "automation-science-pack"
+    ],
+    "military-2": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "military-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "military-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "military-science-pack": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "mining-productivity-1": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "mining-productivity-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "mining-productivity-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "mining-productivity-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "modular-armor": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "modules": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "night-vision-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "nuclear-fuel-reprocessing": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "nuclear-power": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "oil-gathering": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "oil-processing": [],
+    "personal-laser-defense-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "personal-roboport-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "personal-roboport-mk2-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "physical-projectile-damage-1": [
+      "automation-science-pack"
+    ],
+    "physical-projectile-damage-2": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "physical-projectile-damage-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "physical-projectile-damage-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "physical-projectile-damage-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "physical-projectile-damage-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "physical-projectile-damage-7": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "plastics": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "power-armor": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "power-armor-mk2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "processing-unit": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "production-science-pack": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "productivity-module": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "productivity-module-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "productivity-module-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "radar": [
+      "automation-science-pack"
+    ],
+    "railway": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "refined-flammables-1": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "refined-flammables-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "refined-flammables-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "refined-flammables-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "refined-flammables-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "refined-flammables-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "refined-flammables-7": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "repair-pack": [
+      "automation-science-pack"
+    ],
+    "research-speed-1": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "research-speed-2": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "research-speed-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "research-speed-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "research-speed-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "research-speed-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "robotics": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "rocket-fuel": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "rocket-silo": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "rocketry": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "solar-energy": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "solar-panel-equipment": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "space-science-pack": [],
+    "speed-module": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "speed-module-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "speed-module-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "spidertron": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "steam-power": [],
+    "steel-axe": [],
+    "steel-processing": [
+      "automation-science-pack"
+    ],
+    "stone-wall": [
+      "automation-science-pack"
+    ],
+    "stronger-explosives-1": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "stronger-explosives-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "stronger-explosives-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "stronger-explosives-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "stronger-explosives-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "stronger-explosives-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "stronger-explosives-7": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "sulfur-processing": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "tank": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "toolbelt": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "uranium-ammo": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "uranium-mining": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "uranium-processing": [],
+    "utility-science-pack": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "weapon-shooting-speed-1": [
+      "automation-science-pack"
+    ],
+    "weapon-shooting-speed-2": [
+      "automation-science-pack",
+      "logistic-science-pack"
+    ],
+    "weapon-shooting-speed-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "weapon-shooting-speed-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack"
+    ],
+    "weapon-shooting-speed-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack"
+    ],
+    "weapon-shooting-speed-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "military-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "worker-robots-speed-1": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "worker-robots-speed-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "worker-robots-speed-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "worker-robots-speed-4": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "utility-science-pack"
+    ],
+    "worker-robots-speed-5": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ],
+    "worker-robots-speed-6": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack",
+      "space-science-pack"
+    ],
+    "worker-robots-storage-1": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack"
+    ],
+    "worker-robots-storage-2": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack"
+    ],
+    "worker-robots-storage-3": [
+      "automation-science-pack",
+      "logistic-science-pack",
+      "chemical-science-pack",
+      "production-science-pack",
+      "utility-science-pack"
+    ]
+  }
+}

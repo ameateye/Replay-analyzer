@@ -2,6 +2,8 @@
 // time x scale with the chart and x-axis above/below.
 import type { ScaleLinear } from 'd3-scale';
 import type { Run } from '../data';
+import { useGameData } from '../server/GameDataContext';
+import { phaseColor } from '../server/gameData';
 import { COLORS, FONT, fmtTime } from '../theme';
 
 type Phase = Run['phases'][number];
@@ -28,6 +30,7 @@ const PHASE_INFO = [
 
 export function PhaseStrip({ height, innerW, xScale, phases }: Props) {
   void innerW;
+  const gameData = useGameData();
   const accentH = 4;
 
   return (
@@ -68,10 +71,11 @@ export function PhaseStrip({ height, innerW, xScale, phases }: Props) {
         const compact = w < 90;
         const fontMain = w < 70 ? 12 : 14;
         const fontTime = compact ? 9.5 : 11;
+        const color = phaseColor(gameData, p.name);
         return (
           <g key={p.name}>
-            <rect x={x} y={0} width={w} height={height} fill={p.color} opacity={0.18} />
-            <rect x={x} y={0} width={w} height={accentH} fill={p.color} />
+            <rect x={x} y={0} width={w} height={height} fill={color} opacity={0.18} />
+            <rect x={x} y={0} width={w} height={accentH} fill={color} />
             <text
               x={cx}
               y={accentH + 18}
@@ -79,7 +83,7 @@ export function PhaseStrip({ height, innerW, xScale, phases }: Props) {
               fontFamily={FONT}
               fontSize={fontMain}
               fontWeight={700}
-              fill={p.color}
+              fill={color}
             >
               {p.name}
             </text>
@@ -111,7 +115,7 @@ export function PhaseStrip({ height, innerW, xScale, phases }: Props) {
               fontFamily={FONT}
               fontSize={fontMain}
               fontWeight={600}
-              fill={p.color}
+              fill={color}
             >
               {duration}
             </text>

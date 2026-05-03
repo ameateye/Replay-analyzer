@@ -2,6 +2,8 @@
 // underlying lines stay legible. Same x scale as the rest of the overview.
 import type { ScaleLinear } from 'd3-scale';
 import type { Run } from '../data';
+import { useGameData } from '../server/GameDataContext';
+import { phaseColor } from '../server/gameData';
 
 type Phase = Run['phases'][number];
 
@@ -20,6 +22,7 @@ export function PhaseBands({
   showBoundaryLines = true,
   bandOpacity = 0.10,
 }: Props) {
+  const gameData = useGameData();
   return (
     <g pointerEvents="none">
       {phases.map(p => {
@@ -33,7 +36,7 @@ export function PhaseBands({
             y={0}
             width={w}
             height={innerH}
-            fill={p.color}
+            fill={phaseColor(gameData, p.name)}
             opacity={bandOpacity}
           />
         );
@@ -48,7 +51,7 @@ export function PhaseBands({
             x2={x}
             y1={0}
             y2={innerH}
-            stroke={p.color}
+            stroke={phaseColor(gameData, p.name)}
             strokeWidth={1.2}
             strokeDasharray="4 3"
             opacity={0.5}

@@ -1,7 +1,8 @@
 import { useState, type RefObject } from 'react';
 import type { ScaleLinear } from 'd3-scale';
-import type { ResearchInterval } from '../server/gameData';
-import { COLORS, FONT, PACK_COLOR, PACK_SHORT, fmtTime } from '../theme';
+import { type ResearchInterval, packColor, packShort } from '../server/gameData';
+import { useGameData } from '../server/GameDataContext';
+import { COLORS, FONT, fmtTime } from '../theme';
 import { containerXY, type TooltipState } from './Tooltip';
 
 type Props = {
@@ -99,6 +100,7 @@ export function ResearchRibbon({
   containerRef,
   setTooltip,
 }: Props) {
+  const gameData = useGameData();
   const [hoveredTech, setHoveredTech] = useState<string | null>(null);
 
   const placements = placeIcons(researchIntervals, xScale);
@@ -180,7 +182,7 @@ export function ResearchRibbon({
               fontSize={12}
               fill={COLORS.text}
             >
-              {PACK_SHORT[pack] ?? pack}
+              {packShort(gameData, pack)}
             </text>
             {researchIntervals
               .filter(iv => iv.requiredPacks.includes(pack))
@@ -195,7 +197,7 @@ export function ResearchRibbon({
                     y={rowY}
                     width={w}
                     height={ROW_H}
-                    fill={PACK_COLOR[pack]}
+                    fill={packColor(gameData, pack)}
                     opacity={dimSeg(iv.name)}
                     stroke={isHovered ? COLORS.textStrong : 'none'}
                     strokeWidth={isHovered ? 1 : 0}

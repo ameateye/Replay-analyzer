@@ -32,7 +32,7 @@ export function buildEndGameProduction(runDir, rocketLaunchTick) {
   for (let t = 0; t <= rocketLaunchTick; t += mp.period) gridTicks.push(t);
   const minutes = gridTicks.map(t => +(t / 3600).toFixed(4));
 
-  const recipes = RECIPES_GAME_DATA.endGameDisplay.map(({ recipe, label, color }) => {
+  const recipes = RECIPES_GAME_DATA.endGameDisplay.map(({ recipe }) => {
     const outputCount = RECIPES_GAME_DATA.outputCount[recipe] ?? 1;
     const rate = buildProductionSeries(mp, recipe, gridTicks, outputCount);
     const buffer = buildBufferSeries(buf, recipe, gridTicks);
@@ -42,8 +42,6 @@ export function buildEndGameProduction(runDir, rocketLaunchTick) {
 
     return {
       recipe,
-      label,
-      color,
       chestCount: buffer.chestCount,
       finalCum: rate.finalCum,
       peakActual: rate.peakActual,

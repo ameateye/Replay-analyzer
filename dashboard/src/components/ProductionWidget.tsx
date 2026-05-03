@@ -13,6 +13,8 @@ import { scaleLinear } from '@visx/scale';
 import { LinePath, AreaClosed } from '@visx/shape';
 import { bisector } from 'd3-array';
 import type { ScaleLinear } from 'd3-scale';
+import { useGameData } from '../server/GameDataContext';
+import { recipeMeta } from '../server/gameData';
 import { COLORS, FONT, fmtTime } from '../theme';
 import { containerXY, TooltipRow, type TooltipState } from './Tooltip';
 
@@ -20,10 +22,10 @@ export type ProductionMode = 'rate' | 'cum' | 'buffer';
 
 type StatusKey = 'full_output' | 'low_power' | 'unknown';
 
+// Per-recipe series. Display meta (label, color) lives in game-data and is
+// looked up at render time via recipeMeta(); see src/server/gameData.ts.
 type Recipe = {
   recipe: string;
-  label: string;
-  color: string;
   chestCount: number;
   finalCum: number;
   peakActual: number;
@@ -82,6 +84,8 @@ export function ProductionRow({
   containerRef,
   setTooltip,
 }: Props) {
+  const gameData = useGameData();
+  const meta = recipeMeta(gameData, recipe.recipe);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const peak = mode === 'rate'
@@ -114,7 +118,7 @@ export function ProductionRow({
       x,
       y,
       placement: 'top',
-      content: buildProductionTooltip(recipe, minutes, idx, mode),
+      content: buildProductionTooltip(recipe, meta, minutes, idx, mode),
     });
   };
 
@@ -132,7 +136,7 @@ export function ProductionRow({
       : mode === 'cum'
       ? yScale(recipe.cum[hoverIdx])
       : yScale(recipe.bufferWithInv[hoverIdx]);
-  const hoverColor = mode === 'rate' ? ACTUAL_LINE : recipe.color;
+  const hoverColor = mode === 'rate' ? ACTUAL_LINE : meta.color;
 
   const headline = mode === 'rate'
     ? `peak ${formatRate(recipe.peakActual)} / ${formatRate(recipe.peakPotential)} /min · total ${recipe.finalCum.toLocaleString('en-US')}`
@@ -153,7 +157,7 @@ export function ProductionRow({
         fontWeight={600}
         fill={COLORS.textStrong}
       >
-        {recipe.label}
+        {meta.label}
       </text>
 
       {/* Right-margin headline */}
@@ -193,7 +197,7 @@ export function ProductionRow({
 
         {mode === 'rate'
           ? renderRateMode(recipe, minutes, xScale, yScale, rowH)
-          : renderLineMode(recipe, minutes, xScale, yScale, mode)}
+          : renderLineMode(recipe, meta.color, minutes, xScale, yScale, mode)}
 
         {/* Compact y-axis tick: max value at top */}
         <text
@@ -252,6 +256,7 @@ function nearestMinute(minutes: number[], i: number, m: number): number {
 
 function buildProductionTooltip(
   recipe: Recipe,
+  meta: { label: string; color: string },
   minutes: number[],
   i: number,
   mode: ProductionMode,
@@ -268,7 +273,7 @@ function buildProductionTooltip(
   return (
     <>
       <div className="chart-tooltip__title">
-        <span>{recipe.label}</span>
+        <span>{meta.label}</span>
         <span className="time">{t}</span>
       </div>
 
@@ -282,13 +287,13 @@ function buildProductionTooltip(
         />
         <Tab
           label="production"
-          color={recipe.color}
+          color={meta.color}
           value={cum.toLocaleString('en-US')}
           active={mode === 'cum'}
         />
         <Tab
           label="buffer"
-          color={recipe.color}
+          color={meta.color}
           value={buf.toLocaleString('en-US')}
           active={mode === 'buffer'}
         />
@@ -395,6 +400,7 @@ function renderBufferDetails(box: number, inInv: number) {
 
 function renderLineMode(
   recipe: Recipe,
+  color: string,
   minutes: number[],
   xScale: ScaleLinear<number, number>,
   yScale: ScaleLinear<number, number>,
@@ -411,14 +417,14 @@ function renderLineMode(
           x={p => xScale(p.minute)}
           y={p => yScale(p.value)}
           yScale={yScale}
-          fill={recipe.color}
+          fill={color}
           fillOpacity={0.22}
         />
         <LinePath
           data={points}
           x={p => xScale(p.minute)}
           y={p => yScale(p.value)}
-          stroke={recipe.color}
+          stroke={color}
           strokeWidth={1.5}
           strokeOpacity={0.95}
         />
@@ -431,7 +437,7 @@ function renderLineMode(
       data={points}
       x={p => xScale(p.minute)}
       y={p => yScale(p.value)}
-      stroke={recipe.color}
+      stroke={color}
       strokeWidth={1.5}
       strokeOpacity={0.95}
     />

@@ -7,8 +7,9 @@ import { AxisLeft } from '@visx/axis';
 import { bisector } from 'd3-array';
 import type { ScaleLinear } from 'd3-scale';
 import type { Run } from '../data';
-import type { ResearchInterval } from '../server/gameData';
-import { COLORS, FONT, PACK_COLOR, PACK_SHORT, fmtTime } from '../theme';
+import { type ResearchInterval, packColor, packShort, phaseColor } from '../server/gameData';
+import { useGameData } from '../server/GameDataContext';
+import { COLORS, FONT, fmtTime } from '../theme';
 import { containerXY, TooltipRow, type TooltipState } from './Tooltip';
 
 type Point = Run['points'][number];
@@ -44,6 +45,7 @@ export function LabSaturationChart({
   containerRef,
   setTooltip,
 }: Props) {
+  const gameData = useGameData();
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const saturatedLayer = points.map(p => ({
@@ -106,7 +108,7 @@ export function LabSaturationChart({
       content: (
         <>
           <div className="chart-tooltip__title">
-            <span style={{ color: phase?.color ?? '#fff' }}>{phase?.name ?? 'Run'}</span>
+            <span style={{ color: phase ? phaseColor(gameData, phase.name) : '#fff' }}>{phase?.name ?? 'Run'}</span>
             <span className="time">{fmtTime(p.minute)}</span>
           </div>
           {research && (
@@ -136,8 +138,8 @@ export function LabSaturationChart({
                   {missingEntries.map(({ pack, n }) => (
                     <TooltipRow
                       key={pack}
-                      color={PACK_COLOR[pack]}
-                      label={PACK_SHORT[pack] ?? pack}
+                      color={packColor(gameData, pack)}
+                      label={packShort(gameData, pack)}
                       value={fmt1(n)}
                     />
                   ))}
@@ -209,7 +211,7 @@ export function LabSaturationChart({
           y0={d => yScale(d.y0)}
           yScale={yScale}
           defined={d => d.defined}
-          fill={PACK_COLOR[packsUsed[i]]}
+          fill={packColor(gameData, packsUsed[i])}
           opacity={0.5}
         />
       ))}

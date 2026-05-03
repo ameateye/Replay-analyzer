@@ -1,5 +1,8 @@
 // Visual tokens shared across the dashboard. Keep aligned with the existing
 // chart aesthetic (light theme, Segoe UI, dim text #5f6368 / strong #202124).
+//
+// Per-pack / per-recipe / per-phase colors live in game-data/*.json and are
+// looked up at runtime via useGameData() — see src/server/gameData.ts.
 
 export const COLORS = {
   bg: '#fbfbf9',
@@ -15,26 +18,6 @@ export const COLORS = {
   saturatedLine: '#155e75',
   idle: '#dcc8a0',
   idleBorder: '#a8956c',
-};
-
-export const PACK_COLOR: Record<string, string> = {
-  'automation-science-pack': '#c8312a',
-  'logistic-science-pack': '#5cb834',
-  'military-science-pack': '#3a3a3a',
-  'chemical-science-pack': '#3aa8f0',
-  'production-science-pack': '#b14df5',
-  'utility-science-pack': '#f2c94f',
-  'space-science-pack': '#d8d8d8',
-};
-
-export const PACK_SHORT: Record<string, string> = {
-  'automation-science-pack': 'automation',
-  'logistic-science-pack': 'logistic',
-  'military-science-pack': 'military',
-  'chemical-science-pack': 'chemical',
-  'production-science-pack': 'production',
-  'utility-science-pack': 'utility',
-  'space-science-pack': 'space',
 };
 
 export const FONT = '"Segoe UI", Inter, system-ui, -apple-system, sans-serif';

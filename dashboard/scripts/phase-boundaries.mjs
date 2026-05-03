@@ -21,7 +21,6 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUILD_PHASES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'build-phases.json');
 const BUILD_PHASES = JSON.parse(fs.readFileSync(BUILD_PHASES_PATH, 'utf8'));
 const BASE_MACHINE_TYPES = new Set(BUILD_PHASES.baseMachineTypes);
-const COLORS = Object.fromEntries(BUILD_PHASES.phases.map(p => [p.name, p.color]));
 
 const LEAVE_PADDING_TILES = 15;
 const LEAVE_SUSTAIN_SAMPLES = 30;
@@ -182,7 +181,6 @@ export function computePhases(replayDir) {
 
   return order.map(p => ({
     name: p.name,
-    color: COLORS[p.name],
     startTick: p.startTick,
     endTick: p.endTick,
     startMin: p.startTick != null ? p.startTick / 3600 : null,

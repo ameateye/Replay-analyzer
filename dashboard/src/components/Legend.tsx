@@ -1,13 +1,20 @@
-import { COLORS, FONT, PACK_COLOR, PACK_SHORT } from '../theme';
+import { COLORS, FONT } from '../theme';
+import { useGameData } from '../server/GameDataContext';
+import { packColor, packShort } from '../server/gameData';
 
 type Props = {
   packsUsed: string[];
 };
 
 export function Legend({ packsUsed }: Props) {
+  const gameData = useGameData();
   const items: { fill: string; label: string; opacity: number; stroke?: string }[] = [
     { fill: COLORS.saturated, label: 'saturated', opacity: 0.85 },
-    ...packsUsed.map(p => ({ fill: PACK_COLOR[p], label: `missing ${PACK_SHORT[p]}`, opacity: 0.5 })),
+    ...packsUsed.map(p => ({
+      fill: packColor(gameData, p),
+      label: `missing ${packShort(gameData, p)}`,
+      opacity: 0.5,
+    })),
     { fill: COLORS.potentialFill, label: 'potential (no research)', opacity: 1 },
     { fill: COLORS.idle, label: 'no active research', opacity: 0.9, stroke: COLORS.idleBorder },
   ];

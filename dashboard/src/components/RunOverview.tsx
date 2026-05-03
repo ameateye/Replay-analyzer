@@ -4,7 +4,7 @@
 //   3. Phase strip (named blocks with start/end/duration)
 //   4. Shared x-axis (game time)
 // Everything shares one x scale so the four sections line up exactly.
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Group } from '@visx/group';
 import { scaleLinear } from '@visx/scale';
 import { AxisBottom } from '@visx/axis';
@@ -29,16 +29,29 @@ const W = 1500;
 const MARGIN_LEFT = 120;
 const MARGIN_RIGHT = 230;
 const MARGIN_TOP = 16;
-const MARGIN_BOTTOM = 18;
-
+// Layout order is: ribbon → plot → time axis → phase strip. The strip sits
+// LAST so its active-phase chevron lands right at the SVG bottom, directly
+// above the phase analyzer panel — no axis wedged in between to break the
+// visual link from the active band into the analyzer below.
+const MARGIN_BOTTOM = 0;
 const RIBBON_TO_PLOT_GAP = 18;
 const PLOT_H = 280;
-const PLOT_TO_STRIP_GAP = 6;
-const STRIP_H = 92;
-const STRIP_TO_AXIS_GAP = 4;
+const PLOT_TO_AXIS_GAP = 4;
 const AXIS_H = 36;
+const AXIS_TO_STRIP_GAP = 6;
+const STRIP_H = 92;
+// Extra space below the strip for the active-phase chevron to extend into.
+const STRIP_BOTTOM_OVERHANG = 8;
 
-export function RunOverview({ run }: { run: Run }) {
+type Props = {
+  run: Run;
+  activePhase?: string | null;
+  onSelectPhase?: (name: string) => void;
+  isPhaseSelectable?: (name: string) => boolean;
+  children?: ReactNode;
+};
+
+export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable, children }: Props) {
   const innerW = W - MARGIN_LEFT - MARGIN_RIGHT;
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
@@ -68,9 +81,9 @@ export function RunOverview({ run }: { run: Run }) {
 
   const ribbonTop = MARGIN_TOP;
   const plotTop = ribbonTop + ribbonH + RIBBON_TO_PLOT_GAP;
-  const stripTop = plotTop + PLOT_H + PLOT_TO_STRIP_GAP;
-  const axisTop = stripTop + STRIP_H + STRIP_TO_AXIS_GAP;
-  const totalH = axisTop + AXIS_H + MARGIN_BOTTOM;
+  const axisTop = plotTop + PLOT_H + PLOT_TO_AXIS_GAP;
+  const stripTop = axisTop + AXIS_H + AXIS_TO_STRIP_GAP;
+  const totalH = stripTop + STRIP_H + STRIP_BOTTOM_OVERHANG + MARGIN_BOTTOM;
 
   const xTickValues = range(0, run.durationMin + 0.001, 15);
 
@@ -118,6 +131,9 @@ export function RunOverview({ run }: { run: Run }) {
               innerW={innerW}
               xScale={xScale}
               phases={run.phases}
+              activePhase={activePhase}
+              onSelectPhase={onSelectPhase}
+              isSelectable={isPhaseSelectable}
             />
           </Group>
 
@@ -155,6 +171,7 @@ export function RunOverview({ run }: { run: Run }) {
         </svg>
         <ChartTooltip state={tooltip} />
       </div>
+      {children}
     </section>
   );
 }

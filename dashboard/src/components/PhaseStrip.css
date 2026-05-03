@@ -1,0 +1,18 @@
+/* Hover state for clickable phase blocks. The block itself is an SVG <g>
+   with the rect+text inside; we target the rect children via class. */
+.phase-strip__block--selectable {
+  cursor: pointer;
+}
+
+.phase-strip__block--selectable .phase-strip__block-fill {
+  transition: opacity 120ms ease-out;
+}
+
+.phase-strip__block--selectable:hover .phase-strip__block-fill {
+  opacity: 0.26;
+}
+
+.phase-strip__block--active .phase-strip__block-fill,
+.phase-strip__block--selectable.phase-strip__block--active:hover .phase-strip__block-fill {
+  opacity: 0.34;
+}

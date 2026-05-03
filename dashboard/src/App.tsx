@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { RunOverview } from './components/RunOverview';
 import { PhaseAnalyzer } from './components/PhaseAnalyzer';
+import { defaultPhase, hasPhaseWidget } from './components/phaseRegistry';
 import { GameDataProvider } from './server/GameDataContext';
 import { runs, defaultRun } from './data';
 import { fmtTime } from './theme';
@@ -8,6 +9,18 @@ import { fmtTime } from './theme';
 export function App() {
   const [runName, setRunName] = useState<string>(defaultRun.runName);
   const run = runs.find(r => r.runName === runName) ?? defaultRun;
+
+  // Track an explicit user pick separately from the resolved active phase.
+  // When the run changes (or the picked phase has no widget for this run),
+  // fall back to the run's first selectable phase without persisting that
+  // fallback as a "user choice" — so picking a phase on run A then switching
+  // to run B doesn't sticky the wrong selection forever.
+  const [requestedPhase, setRequestedPhase] = useState<string | null>(null);
+  const activePhase = requestedPhase && hasPhaseWidget(run, requestedPhase)
+    ? requestedPhase
+    : defaultPhase(run);
+
+  const isPhaseSelectable = (name: string) => hasPhaseWidget(run, name);
 
   return (
     <GameDataProvider>
@@ -33,8 +46,14 @@ export function App() {
             </div>
           )}
         </header>
-        <RunOverview run={run} />
-        <PhaseAnalyzer run={run} />
+        <RunOverview
+          run={run}
+          activePhase={activePhase}
+          onSelectPhase={setRequestedPhase}
+          isPhaseSelectable={isPhaseSelectable}
+        >
+          <PhaseAnalyzer run={run} phaseName={activePhase} />
+        </RunOverview>
       </div>
     </GameDataProvider>
   );

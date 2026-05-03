@@ -13,6 +13,9 @@
       extract <name> [save]     Move all *.json files from Factorio's script-output folder
                                 into extracted-data/<name>/. If [save] is given, also delete
                                 that save from the Factorio saves folder afterwards.
+      process <name> [save]     Full post-replay pipeline: extract JSONs, optionally clean
+                                the save, then rebuild dashboard data via `npm run data`
+                                so the new run shows up in the React app.
       clean <save>              Delete a save from the Factorio saves folder. <save> can be
                                 a filename (with or without .zip) or a glob. The original
                                 save in externalSavesFolder is never touched.
@@ -25,7 +28,7 @@
     Typical workflow:
       replay-tool install  "DSMP 01_47_59.zip"
       <play in Factorio, save, run /export-replay-data>
-      replay-tool extract  DSMP-run-1 "DSMP 01_47_59.zip"     # extract + clean in one step
+      replay-tool process  DSMP-run-1 "DSMP 01_47_59.zip"     # extract + clean + rebuild dashboard
 
 .EXAMPLE
     ./replay-tool.ps1 install "DSMP 01_47_59.zip"
@@ -33,13 +36,14 @@
     ./replay-tool.ps1 build
     ./replay-tool.ps1 extract DSMP-run-1
     ./replay-tool.ps1 extract DSMP-run-1 "DSMP 01_47_59.zip"
+    ./replay-tool.ps1 process DSMP-run-1 "DSMP 01_47_59.zip"
     ./replay-tool.ps1 clean "DSMP 01_47_59.zip"
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('install', 'build', 'extract', 'clean', 'list-saves', 'list-installed', 'config', 'help')]
+    [ValidateSet('install', 'build', 'extract', 'process', 'clean', 'list-saves', 'list-installed', 'config', 'help')]
     [string]$Command = 'help',
 
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
@@ -56,7 +60,7 @@ function Get-Config {
         throw "Config file not found at $configPath"
     }
     $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
-    foreach ($p in @('repoPath', 'controlLuaPath', 'externalSavesFolder', 'factorioSavesFolder', 'factorioScriptOutput', 'extractedDataFolder')) {
+    foreach ($p in @('repoPath', 'controlLuaPath', 'externalSavesFolder', 'factorioSavesFolder', 'factorioScriptOutput', 'extractedDataFolder', 'dashboardPath')) {
         if (-not $cfg.PSObject.Properties.Name.Contains($p)) {
             throw "Config is missing required key: $p"
         }
@@ -264,6 +268,42 @@ function Invoke-Extract {
     }
 }
 
+function Invoke-BuildDashboardData {
+    <#
+        Run `npm run data -- <run-folder>` in dashboardPath. build-run-data.mjs
+        accepts absolute paths, so we pass the resolved extracted-data subfolder
+        directly — no relative-path computation needed (and avoids depending on
+        [System.IO.Path]::GetRelativePath which Windows PowerShell 5.1 lacks).
+    #>
+    param([string]$Name, [object]$Config)
+
+    $runFolder = Join-Path $Config.extractedDataFolder $Name
+    if (-not (Test-Path -LiteralPath $runFolder)) {
+        throw "Extracted-data folder not found: $runFolder"
+    }
+    if (-not (Test-Path -LiteralPath $Config.dashboardPath)) {
+        throw "Dashboard path not found: $($Config.dashboardPath)"
+    }
+
+    Push-Location $Config.dashboardPath
+    try {
+        Write-Host "Running: npm run data -- `"$runFolder`""
+        npm run data -- $runFolder
+        if ($LASTEXITCODE -ne 0) { throw "npm run data failed (exit $LASTEXITCODE)" }
+        Write-Host "Dashboard data rebuilt for $Name." -ForegroundColor Green
+    } finally {
+        Pop-Location
+    }
+}
+
+function Invoke-Process {
+    param([string]$Name, [string]$SaveToClean, [object]$Config)
+
+    Invoke-Extract -Name $Name -SaveToClean $SaveToClean -Config $Config
+    Write-Host ""
+    Invoke-BuildDashboardData -Name $Name -Config $Config
+}
+
 function Invoke-Clean {
     param([string]$SaveArg, [object]$Config)
 
@@ -306,6 +346,7 @@ try {
         'install'        { Invoke-Install -SaveArg $Args[0] -Config $cfg }
         'build'          { Invoke-Build -Config $cfg }
         'extract'        { Invoke-Extract -Name $Args[0] -SaveToClean $Args[1] -Config $cfg }
+        'process'        { Invoke-Process -Name $Args[0] -SaveToClean $Args[1] -Config $cfg }
         'clean'          { Invoke-Clean -SaveArg $Args[0] -Config $cfg }
         'list-saves'     { Invoke-ListSaves -Pattern $Args[0] -Config $cfg }
         'list-installed' { Invoke-ListInstalled -Config $cfg }

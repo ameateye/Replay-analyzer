@@ -4,5 +4,6 @@
   "externalSavesFolder": "<wherever you store .zip saves you've received from elsewhere>",
   "factorioSavesFolder": "C:/Users/<you>/AppData/Roaming/Factorio/saves",
   "factorioScriptOutput": "C:/Users/<you>/AppData/Roaming/Factorio/script-output",
-  "extractedDataFolder": "<absolute path to this repo>/extracted-data"
+  "extractedDataFolder": "<absolute path to this repo>/extracted-data",
+  "dashboardPath": "<absolute path to this repo>/dashboard"
 }

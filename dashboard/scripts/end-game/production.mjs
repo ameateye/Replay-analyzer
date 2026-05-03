@@ -6,7 +6,7 @@
 // without this, smoothing + items-already-in-flight clamping drift the stack
 // top above the explicit potential line during stall edges.
 
-const LOSS_STATUS_ORDER = ['full_output', 'low_power', 'unknown'];
+const LOSS_STATUS_ORDER = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
 const SMOOTH_HALF_WINDOW = 12; // ±12 periods × 5 s ≈ ±1 min
 
 function smooth(values, halfWindow) {
@@ -100,11 +100,9 @@ export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1
   const totalMach   = new Array(gridTicks.length).fill(0);
   const itemLossPP  = {};
   const fluidLossPP = {};
-  const statusLossPP = {
-    full_output: new Array(gridTicks.length).fill(0),
-    low_power:   new Array(gridTicks.length).fill(0),
-    unknown:     new Array(gridTicks.length).fill(0),
-  };
+  const statusLossPP = Object.fromEntries(
+    LOSS_STATUS_ORDER.map(k => [k, new Array(gridTicks.length).fill(0)]),
+  );
 
   for (let i = 0; i < gridTicks.length; i++) {
     const tick = gridTicks[i];
@@ -134,7 +132,7 @@ export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1
         for (const ing of list) {
           (fluidLossPP[ing] ??= new Array(gridTicks.length).fill(0))[i] += share;
         }
-      } else if (status === 'full_output' || status === 'low_power') {
+      } else if (statusLossPP[status]) {
         statusLossPP[status][i] += lost;
       } else {
         statusLossPP.unknown[i] += lost;
@@ -150,11 +148,10 @@ export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1
   const potentialSm = smooth(toMin(potentialPP), SMOOTH_HALF_WINDOW);
   const itemLossSm  = smoothMap(Object.fromEntries(Object.entries(itemLossPP).map(([k, v]) => [k, toMin(v)])), SMOOTH_HALF_WINDOW);
   const fluidLossSm = smoothMap(Object.fromEntries(Object.entries(fluidLossPP).map(([k, v]) => [k, toMin(v)])), SMOOTH_HALF_WINDOW);
-  const statusLossSm = smoothMap({
-    full_output: toMin(statusLossPP.full_output),
-    low_power:   toMin(statusLossPP.low_power),
-    unknown:     toMin(statusLossPP.unknown),
-  }, SMOOTH_HALF_WINDOW);
+  const statusLossSm = smoothMap(
+    Object.fromEntries(LOSS_STATUS_ORDER.map(k => [k, toMin(statusLossPP[k])])),
+    SMOOTH_HALF_WINDOW,
+  );
 
   const itemNames  = Object.keys(itemLossSm);
   const fluidNames = Object.keys(fluidLossSm);
@@ -194,10 +191,8 @@ export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1
     fluidsByLoss,
     itemLoss:   Object.fromEntries(itemsByLoss.map(k => [k, round2(itemLossSm[k])])),
     fluidLoss:  Object.fromEntries(fluidsByLoss.map(k => [k, round2(fluidLossSm[k])])),
-    statusLoss: {
-      full_output: round2(statusLossSm.full_output),
-      low_power:   round2(statusLossSm.low_power),
-      unknown:     round2(statusLossSm.unknown),
-    },
+    statusLoss: Object.fromEntries(
+      LOSS_STATUS_ORDER.map(k => [k, round2(statusLossSm[k])]),
+    ),
   };
 }

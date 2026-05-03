@@ -25,6 +25,7 @@ export type GameData = {
   recipes: {
     outputCount: RecipeOutputCount;
     endGameDisplay: EndGameRecipeDisplay[];
+    mixedSegmentDisplay: EndGameRecipeDisplay[];
   };
   buildPhases: {
     baseMachineTypes: string[];
@@ -62,7 +63,8 @@ export function loadGameData(): Promise<GameData> {
 // ---------- helpers for components ----------
 
 export function recipeMeta(gameData: GameData, recipe: string): EndGameRecipeDisplay {
-  const m = gameData.recipes.endGameDisplay.find(r => r.recipe === recipe);
+  const m = gameData.recipes.endGameDisplay.find(r => r.recipe === recipe)
+         ?? gameData.recipes.mixedSegmentDisplay.find(r => r.recipe === recipe);
   if (m) return m;
   return { recipe, label: recipe, color: '#999999' };
 }

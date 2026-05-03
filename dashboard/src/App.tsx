@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { RunOverview } from './components/RunOverview';
-import { EndGameWidgets } from './components/EndGameWidgets';
+import { PhaseAnalyzer } from './components/PhaseAnalyzer';
 import { GameDataProvider } from './server/GameDataContext';
 import { runs, defaultRun } from './data';
 import { fmtTime } from './theme';
@@ -34,7 +34,7 @@ export function App() {
           )}
         </header>
         <RunOverview run={run} />
-        <EndGameWidgets run={run} />
+        <PhaseAnalyzer run={run} />
       </div>
     </GameDataProvider>
   );

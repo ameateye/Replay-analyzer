@@ -1,0 +1,47 @@
+.phase-analyzer {
+  margin-top: 18px;
+}
+
+.phase-analyzer__tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+  margin-bottom: 10px;
+}
+
+.phase-analyzer__tab {
+  appearance: none;
+  background: var(--surface);
+  border: none;
+  border-left: 1px solid var(--border);
+  padding: 8px 18px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.phase-analyzer__tab:first-child {
+  border-left: none;
+}
+
+.phase-analyzer__tab:hover:not(:disabled):not(.phase-analyzer__tab--active) {
+  background: #f3f3ef;
+}
+
+.phase-analyzer__tab--active {
+  background: #ecedf2;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.phase-analyzer__tab:disabled {
+  color: #c0c0bd;
+  cursor: not-allowed;
+}
+
+.phase-analyzer .end-game {
+  margin-top: 0;
+}

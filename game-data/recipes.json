@@ -12,5 +12,36 @@
     { "recipe": "rocket-fuel",             "label": "Rocket fuel",    "color": "#ef4444" },
     { "recipe": "production-science-pack", "label": "Purple science", "color": "#b14df5" },
     { "recipe": "utility-science-pack",    "label": "Yellow science", "color": "#f2c94f" }
-  ]
+  ],
+  "mixedSegmentDisplay": [
+    { "recipe": "copper-plate",          "label": "Copper smelters", "color": "#c87f3b" },
+    { "recipe": "iron-plate",            "label": "Iron buffer",     "color": "#7e8694" },
+    { "recipe": "plastic-bar",           "label": "Plastic",         "color": "#dadada" },
+    { "recipe": "low-density-structure", "label": "LDS",             "color": "#c5cad0" },
+    { "recipe": "processing-unit",       "label": "Blue chips",      "color": "#2756c8" }
+  ],
+  "oilPhaseDisplay": {
+    "groups": [
+      { "id": "oil",          "label": "Oil" },
+      { "id": "rc-modules",   "label": "RC & modules" },
+      { "id": "blue-science", "label": "Blue science" }
+    ],
+    "rows": [
+      { "key": "oil-processing-rate",          "group": "oil",          "label": "Refinery throughput",        "color": "#d97706", "mode": "rate",
+        "components": [
+          { "recipe": "basic-oil-processing",    "label": "Basic",    "color": "#a4682c" },
+          { "recipe": "advanced-oil-processing", "label": "Advanced", "color": "#d97706" }
+        ]
+      },
+      { "key": "crude-oil-buffer",             "group": "oil",          "recipe": "crude-oil",               "label": "Crude oil",                  "color": "#2c2017", "mode": "fluid-buffer" },
+      { "key": "heavy-oil-buffer",             "group": "oil",          "recipe": "heavy-oil",               "label": "Heavy oil",                  "color": "#c14e1a", "mode": "fluid-buffer" },
+      { "key": "light-oil-buffer",             "group": "oil",          "recipe": "light-oil",               "label": "Light oil",                  "color": "#e0a020", "mode": "fluid-buffer" },
+      { "key": "petroleum-gas-buffer",         "group": "oil",          "recipe": "petroleum-gas",           "label": "Petroleum gas",              "color": "#b14df5", "mode": "fluid-buffer" },
+      { "key": "advanced-circuit-rate",        "group": "rc-modules",   "recipe": "advanced-circuit",        "label": "Red chips (oil-phase line)", "color": "#c8312a", "mode": "rate", "machineFilter": "before-mixed" },
+      { "key": "productivity-module-rate",     "group": "rc-modules",   "recipe": "productivity-module",     "label": "Productivity module 1",      "color": "#dd2e6f", "mode": "rate" },
+      { "key": "speed-module-cum",             "group": "rc-modules",   "recipe": "speed-module",            "label": "Speed module 1",             "color": "#1d5cb5", "mode": "cum" },
+      { "key": "chemical-science-rate",        "group": "blue-science", "recipe": "chemical-science-pack",   "label": "Blue science (rate)",        "color": "#3aa8f0", "mode": "rate" },
+      { "key": "chemical-science-cum",         "group": "blue-science", "recipe": "chemical-science-pack",   "label": "Blue science (cumulative)",  "color": "#3aa8f0", "mode": "cum" }
+    ]
+  }
 }

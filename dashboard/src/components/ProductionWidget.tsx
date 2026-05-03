@@ -18,13 +18,29 @@ import { recipeMeta } from '../server/gameData';
 import { COLORS, FONT, fmtTime } from '../theme';
 import { containerXY, TooltipRow, type TooltipState } from './Tooltip';
 
-export type ProductionMode = 'rate' | 'cum' | 'buffer';
+// 'fluid-buffer' is buffer-mode for fluid tanks: same line rendering as
+// 'buffer' but different headline + tooltip wording (tanks, not chests + inv).
+// Data prep stores the per-tick fluid sum in `bufferWithInv` so the line path
+// is identical.
+export type ProductionMode = 'rate' | 'cum' | 'buffer' | 'fluid-buffer';
 
-type StatusKey = 'full_output' | 'low_power' | 'unknown';
+type StatusKey = 'no_ingredients' | 'no_fuel' | 'full_output' | 'low_power' | 'unknown';
+
+// One stacked source within a combined rate row (e.g. basic + advanced oil
+// processing under a single "Refinery throughput" row).
+export type RecipeComponent = {
+  recipe: string;
+  label: string;
+  color: string;
+  actual: number[];
+  cum: number[];
+  peakActual: number;
+  finalCum: number;
+};
 
 // Per-recipe series. Display meta (label, color) lives in game-data and is
 // looked up at render time via recipeMeta(); see src/server/gameData.ts.
-type Recipe = {
+export type Recipe = {
   recipe: string;
   chestCount: number;
   finalCum: number;
@@ -42,6 +58,9 @@ type Recipe = {
   cum: number[];
   buffer: number[];
   bufferWithInv: number[];
+  // Optional: when a row aggregates multiple sources, components carries the
+  // per-source actual + cum so rate-mode can stack them in distinct colors.
+  components?: RecipeComponent[];
 };
 
 type Props = {
@@ -56,6 +75,11 @@ type Props = {
   totalW: number;
   containerRef: RefObject<HTMLDivElement>;
   setTooltip: (s: TooltipState) => void;
+  // Optional per-row label/color override. Useful when the same recipe key
+  // appears multiple times with different roles (e.g. blue science as both a
+  // rate row and a cumulative row in the oil-phase widget) so recipeMeta()'s
+  // single recipe→meta lookup can't distinguish them.
+  metaOverride?: { label: string; color: string };
 };
 
 const bisectMinute = bisector<number, number>(m => m).left;
@@ -65,11 +89,13 @@ const ACTUAL_LINE = '#155e75';
 const ITEM_PALETTE = ['#c8312a', '#e07854', '#a4682c', '#d97706', '#7c2d12', '#92400e'];
 const FLUID_PALETTE = ['#3aa8f0', '#67e8f9', '#155e75', '#5b21b6'];
 const STATUS_COLOR: Record<StatusKey, string> = {
-  full_output: '#f2c94f',
-  low_power:   '#b14df5',
-  unknown:     '#9aa0a6',
+  no_ingredients: '#8b6f47',
+  no_fuel:        '#2d2d2d',
+  full_output:    '#f2c94f',
+  low_power:      '#b14df5',
+  unknown:        '#9aa0a6',
 };
-const LOSS_STATUS_ORDER: StatusKey[] = ['full_output', 'low_power', 'unknown'];
+const LOSS_STATUS_ORDER: StatusKey[] = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
 
 export function ProductionRow({
   recipe,
@@ -83,9 +109,13 @@ export function ProductionRow({
   totalW,
   containerRef,
   setTooltip,
+  metaOverride,
 }: Props) {
   const gameData = useGameData();
-  const meta = recipeMeta(gameData, recipe.recipe);
+  const lookupMeta = recipeMeta(gameData, recipe.recipe);
+  const meta = metaOverride
+    ? { recipe: recipe.recipe, label: metaOverride.label, color: metaOverride.color }
+    : lookupMeta;
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const peak = mode === 'rate'
@@ -142,23 +172,36 @@ export function ProductionRow({
     ? `peak ${formatRate(recipe.peakActual)} / ${formatRate(recipe.peakPotential)} /min · total ${recipe.finalCum.toLocaleString('en-US')}`
     : mode === 'cum'
     ? `total ${recipe.finalCum.toLocaleString('en-US')}`
+    : mode === 'fluid-buffer'
+    ? `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')} · ${recipe.chestCount} tank${recipe.chestCount === 1 ? '' : 's'}`
     : `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')} · ${recipe.chestCount} chest${recipe.chestCount === 1 ? '' : 's'} + inv`;
 
   return (
     <>
-      {/* Left-margin label */}
-      <text
-        x={marginLeft - 10}
-        y={rowH / 2}
-        textAnchor="end"
-        dominantBaseline="middle"
-        fontFamily={FONT}
-        fontSize={12}
-        fontWeight={600}
-        fill={COLORS.textStrong}
-      >
-        {meta.label}
-      </text>
+      {/* Left-margin label. foreignObject so long labels wrap onto multiple
+          lines instead of overflowing into the plot. */}
+      <foreignObject x={0} y={0} width={marginLeft} height={rowH}>
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            textAlign: 'right',
+            paddingRight: 10,
+            boxSizing: 'border-box',
+            fontFamily: FONT,
+            fontSize: 12,
+            fontWeight: 600,
+            color: COLORS.textStrong,
+            lineHeight: 1.2,
+            overflowWrap: 'break-word',
+          }}
+        >
+          {meta.label}
+        </div>
+      </foreignObject>
 
       {/* Right-margin headline */}
       <text
@@ -197,7 +240,7 @@ export function ProductionRow({
 
         {mode === 'rate'
           ? renderRateMode(recipe, minutes, xScale, yScale, rowH)
-          : renderLineMode(recipe, meta.color, minutes, xScale, yScale, mode)}
+          : renderLineMode(recipe, meta.color, minutes, xScale, yScale, mode === 'cum' ? 'cum' : 'buffer')}
 
         {/* Compact y-axis tick: max value at top */}
         <text
@@ -277,27 +320,38 @@ function buildProductionTooltip(
         <span className="time">{t}</span>
       </div>
 
-      <div className="chart-tooltip__tabs">
-        <Tab
-          label="rate"
-          color={ACTUAL_FILL}
-          value={formatRate(actual)}
-          unit="/min"
-          active={mode === 'rate'}
-        />
-        <Tab
-          label="production"
-          color={meta.color}
-          value={cum.toLocaleString('en-US')}
-          active={mode === 'cum'}
-        />
-        <Tab
-          label="buffer"
-          color={meta.color}
-          value={buf.toLocaleString('en-US')}
-          active={mode === 'buffer'}
-        />
-      </div>
+      {mode === 'fluid-buffer' ? (
+        <div className="chart-tooltip__tabs">
+          <Tab
+            label="buffer"
+            color={meta.color}
+            value={buf.toLocaleString('en-US')}
+            active
+          />
+        </div>
+      ) : (
+        <div className="chart-tooltip__tabs">
+          <Tab
+            label="rate"
+            color={ACTUAL_FILL}
+            value={formatRate(actual)}
+            unit="/min"
+            active={mode === 'rate'}
+          />
+          <Tab
+            label="production"
+            color={meta.color}
+            value={cum.toLocaleString('en-US')}
+            active={mode === 'cum'}
+          />
+          <Tab
+            label="buffer"
+            color={meta.color}
+            value={buf.toLocaleString('en-US')}
+            active={mode === 'buffer'}
+          />
+        </div>
+      )}
 
       {mode === 'rate' && renderRateDetails(recipe, i, potential, gap)}
       {mode === 'cum' && renderProductionDetails(recipe, cum)}
@@ -359,6 +413,19 @@ function renderRateDetails(recipe: Recipe, i: number, potential: number, gap: nu
       <TooltipRow label="potential" value={`${formatRate(potential)} /min`} muted />
       {gap > 0 && (
         <TooltipRow label="gap" value={`${formatRate(gap)} /min`} muted />
+      )}
+      {recipe.components && recipe.components.length > 0 && (
+        <>
+          <div className="chart-tooltip__details-label">sources</div>
+          {recipe.components.map(c => (
+            <TooltipRow
+              key={c.label}
+              color={c.color}
+              label={c.label}
+              value={`${formatRate(c.actual[i])} /min`}
+            />
+          ))}
+        </>
       )}
       {topLosses.length > 0 && (
         <>
@@ -457,6 +524,21 @@ function renderRateMode(
   const actualPts = minutes.map((m, i) => ({ minute: m, value: recipe.actual[i] }));
   const potentialPts = minutes.map((m, i) => ({ minute: m, value: recipe.potential[i] }));
 
+  // Component-stacked actual: bottom-up bands one per source, summing to
+  // recipe.actual. When absent, fall back to a single teal area.
+  const componentLayers = recipe.components && recipe.components.length > 0
+    ? recipe.components.map((comp, idx) => {
+        const layer: Layer[] = new Array(N);
+        for (let i = 0; i < N; i++) {
+          let y0 = 0;
+          for (let j = 0; j < idx; j++) y0 += recipe.components![j].actual[i];
+          const here = comp.actual[i];
+          layer[i] = { minute: minutes[i], y0, y1: y0 + here, defined: here > 0 };
+        }
+        return { color: comp.color, label: comp.label, layer };
+      })
+    : null;
+
   // Stack order from the bottom up: items first (largest loss first), then
   // fluids, then statuses. Same order as production-d3.ts.
   type StackKey =
@@ -500,15 +582,32 @@ function renderRateMode(
 
   return (
     <>
-      {/* Actual production: solid teal area. */}
-      <AreaClosed
-        data={actualPts}
-        x={p => xScale(p.minute)}
-        y={p => yScale(p.value)}
-        yScale={yScale}
-        fill={ACTUAL_FILL}
-        fillOpacity={0.85}
-      />
+      {/* Actual production. Single teal area when there's one source; stacked
+          per-component bands (bottom-up) when the row aggregates multiple. */}
+      {componentLayers ? (
+        componentLayers.map(({ color, label, layer }) => (
+          <AreaClosed
+            key={label}
+            data={layer}
+            x={d => xScale(d.minute)}
+            y={d => yScale(d.y1)}
+            y0={d => yScale(d.y0)}
+            yScale={yScale}
+            defined={d => d.defined}
+            fill={color}
+            fillOpacity={0.8}
+          />
+        ))
+      ) : (
+        <AreaClosed
+          data={actualPts}
+          x={p => xScale(p.minute)}
+          y={p => yScale(p.value)}
+          yScale={yScale}
+          fill={ACTUAL_FILL}
+          fillOpacity={0.85}
+        />
+      )}
 
       {/* Stacked loss bands. */}
       {stackOrder.map((key, idx) => {

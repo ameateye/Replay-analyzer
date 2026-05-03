@@ -17,6 +17,8 @@ import { fileURLToPath } from 'url';
 import { prepareLabSaturationData } from './lab-saturation-prep.mjs';
 import { computePhases, computeRocketLaunchTick } from './phase-boundaries.mjs';
 import { buildEndGameProduction } from './end-game-production-prep.mjs';
+import { buildMixedSegment } from './end-game/mixed-segment.mjs';
+import { buildOilPhase } from './oil-phase-prep.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_ROOT = path.resolve(__dirname, '..');
@@ -70,6 +72,8 @@ const peakActiveLabs = points.reduce((m, p) => Math.max(m, p.active ?? 0), 0);
 const peakLabs = points.reduce((m, p) => Math.max(m, p.total ?? 0), 0);
 
 const endGame = buildEndGameProduction(runDir, rocketLaunchTick);
+const mixedSegment = buildMixedSegment(runDir, phases, rocketLaunchTick);
+const oilPhase = buildOilPhase(runDir, rocketLaunchTick, phases);
 
 const output = {
   runName,
@@ -82,6 +86,8 @@ const output = {
   idleRects,
   researchIntervals,
   phases,
+  mixedSegment,
+  oilPhase,
   endGame,
 };
 
@@ -115,4 +121,10 @@ const sizeKB = (fs.statSync(outPath).size / 1024).toFixed(1);
 console.log(`  ${points.length} points, ${idleRects.length} idle bands, ${researchIntervals.length} research intervals`);
 console.log(`  peak active=${peakActiveLabs} peak labs=${peakLabs} duration=${rocketLaunchMin.toFixed(2)} min`);
 console.log(`  end-game recipes: ${endGame.recipes.map(r => `${r.recipe} (${r.finalCum})`).join(', ')}`);
+if (mixedSegment) {
+  console.log(`  mixed segment: ${mixedSegment.startMin.toFixed(1)}–${mixedSegment.endMin.toFixed(1)} min, recipes: ${mixedSegment.recipes.map(r => `${r.recipe} (${r.mode})`).join(', ')}`);
+}
+if (oilPhase) {
+  console.log(`  oil phase rows: ${oilPhase.rows.map(r => `${r.key} (${r.mode})`).join(', ')}`);
+}
 console.log(`Wrote ${outPath} (${sizeKB} KB)`);

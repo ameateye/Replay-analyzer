@@ -8,7 +8,7 @@ import { Group } from '@visx/group';
 import { scaleLinear } from '@visx/scale';
 import { AxisBottom } from '@visx/axis';
 import { range } from 'd3-array';
-import { run } from '../data';
+import type { Run } from '../data';
 import { COLORS, FONT, fmtTimeNoSec } from '../theme';
 import { ProductionRow, type ProductionMode } from './ProductionWidget';
 import { ChartTooltip, type TooltipState } from './Tooltip';
@@ -32,7 +32,7 @@ const TABS: { mode: ProductionMode; label: string }[] = [
   { mode: 'buffer', label: 'Buffer (incl. player inv.)' },
 ];
 
-export function EndGameWidgets() {
+export function EndGameWidgets({ run }: { run: Run }) {
   const [mode, setMode] = useState<ProductionMode>('rate');
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);

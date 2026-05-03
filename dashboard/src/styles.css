@@ -41,6 +41,42 @@ html, body, #root {
 }
 
 .dashboard-header .meta {
+  display: block;
+  margin-top: 2px;
   color: var(--text-dim);
   font-size: 14px;
+}
+
+.run-picker {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.run-picker__tab {
+  appearance: none;
+  background: var(--surface);
+  border: none;
+  border-left: 1px solid var(--border);
+  padding: 6px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.run-picker__tab:first-child {
+  border-left: none;
+}
+
+.run-picker__tab:hover {
+  background: #f3f3ef;
+}
+
+.run-picker__tab--active {
+  background: #ecedf2;
+  color: var(--text);
+  font-weight: 600;
 }

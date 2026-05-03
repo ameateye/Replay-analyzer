@@ -89,8 +89,27 @@ const outDir = path.join(DASHBOARD_ROOT, 'src', 'data');
 fs.mkdirSync(outDir, { recursive: true });
 const outPath = path.join(outDir, `${runName}.json`);
 fs.writeFileSync(outPath, JSON.stringify(output));
+
+// Regenerate the run-index. Lists every <name>.json in src/data/ ordered by
+// most-recently-built first, so the freshly-built run becomes the default
+// without any extra step. App.tsx exposes a picker over `runs[]`.
+const allJsons = fs.readdirSync(outDir)
+  .filter(n => n.endsWith('.json'))
+  .map(n => ({ name: n, mtime: fs.statSync(path.join(outDir, n)).mtimeMs }))
+  .sort((a, b) => b.mtime - a.mtime)
+  .map(e => e.name.replace(/\.json$/, ''));
+
+// JSON imports preserve literal types per file, so runs have nominally
+// distinct types even though their structural shape is identical. Anchor the
+// shared `Run` type on the first (newest) run and cast the others through
+// `unknown` so consumers see a single Run type.
 const indexPath = path.join(outDir, 'index.ts');
-fs.writeFileSync(indexPath, `import data from './${runName}.json';\nexport { data as run };\nexport type Run = typeof data;\n`);
+const imports = allJsons.map((n, i) => `import r${i} from './${n}.json';`).join('\n');
+const items = allJsons.map((_, i) => i === 0 ? 'r0' : `r${i} as unknown as Run`).join(', ');
+fs.writeFileSync(
+  indexPath,
+  `${imports}\n\nexport type Run = typeof r0;\nexport const runs: Run[] = [${items}];\nexport const defaultRun = runs[0];\n`,
+);
 
 const sizeKB = (fs.statSync(outPath).size / 1024).toFixed(1);
 console.log(`  ${points.length} points, ${idleRects.length} idle bands, ${researchIntervals.length} research intervals`);

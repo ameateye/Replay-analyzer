@@ -9,7 +9,7 @@ import { Group } from '@visx/group';
 import { scaleLinear } from '@visx/scale';
 import { AxisBottom } from '@visx/axis';
 import { range } from 'd3-array';
-import { run } from '../data';
+import type { Run } from '../data';
 import { COLORS, FONT, fmtTimeNoSec } from '../theme';
 import { useGameData } from '../server/GameDataContext';
 import { augmentResearchIntervals } from '../server/gameData';
@@ -38,7 +38,7 @@ const STRIP_H = 92;
 const STRIP_TO_AXIS_GAP = 4;
 const AXIS_H = 36;
 
-export function RunOverview() {
+export function RunOverview({ run }: { run: Run }) {
   const innerW = W - MARGIN_LEFT - MARGIN_RIGHT;
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
@@ -46,15 +46,18 @@ export function RunOverview() {
 
   const researchIntervals = useMemo(
     () => augmentResearchIntervals(run.researchIntervals, gameData),
-    [gameData],
+    [run, gameData],
   );
 
   const xScale = useMemo(
     () => scaleLinear<number>({ domain: [0, run.durationMin], range: [0, innerW] }),
-    [innerW],
+    [innerW, run.durationMin],
   );
 
-  const peakLabs = useMemo(() => run.points.reduce((m, p) => Math.max(m, p.total), 0), []);
+  const peakLabs = useMemo(
+    () => run.points.reduce((m, p) => Math.max(m, p.total), 0),
+    [run.points],
+  );
   const yMax = niceCeiling(peakLabs * 1.15);
   const yScale = useMemo(
     () => scaleLinear<number>({ domain: [0, yMax], range: [PLOT_H, 0], nice: true }),

@@ -19,8 +19,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { buildRecipeRow } from './end-game-production-prep.mjs';
-import { buildBufferSeries } from './end-game/buffer.mjs';
+import { buildRecipeRow, CAPACITY_CFG } from './end-game-production-prep.mjs';
+import { buildBufferSeries, bufferApproachesCapacity } from './end-game/buffer.mjs';
 import { buildProductionSeries } from './end-game/production.mjs';
 
 const STATUS_KEYS = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
@@ -51,13 +51,19 @@ export function buildOilPhase(runDir, rocketLaunchTick, phases) {
   const zeros = () => new Array(N).fill(0);
 
   const rows = config.map(cfg => {
-    const display = { key: cfg.key, group: cfg.group ?? 'oil', label: cfg.label, color: cfg.color, mode: cfg.mode };
+    // key + mode are kept in the per-run JSON because they're how the
+    // runtime widget correlates rows to their display config in
+    // recipes.json (looked up via gameData.recipes.oilPhaseDisplay.rows).
+    // label / color / group come from runtime so editing them in
+    // recipes.json takes effect on the next page reload.
+    const stub = { key: cfg.key, mode: cfg.mode };
 
     if (cfg.mode === 'fluid-buffer') {
-      const fluid = buildBufferSeries(buf, cfg.recipe, gridTicks, 'tank');
+      const fluid = buildBufferSeries(buf, cfg.recipe, gridTicks, 'tank', CAPACITY_CFG);
       const buffer = fluid.buffer.map(v => Math.round(v));
+      const showBufferLimit = bufferApproachesCapacity(fluid.buffer, fluid.capacity);
       return {
-        ...display,
+        ...stub,
         recipe: cfg.recipe,
         chestCount: fluid.chestCount,
         finalCum: 0,
@@ -75,11 +81,14 @@ export function buildOilPhase(runDir, rocketLaunchTick, phases) {
         cum: zeros(),
         buffer,
         bufferWithInv: buffer,
+        bufferLimit: showBufferLimit ? fluid.capacity.map(v => Math.round(v)) : null,
+        peakBufferLimit: showBufferLimit ? Math.round(fluid.peakCapacity) : 0,
+        showBufferLimit,
       };
     }
 
     if (Array.isArray(cfg.components) && cfg.components.length > 0) {
-      return buildCombinedRow(mp, gridTicks, display, cfg.components, N);
+      return buildCombinedRow(mp, gridTicks, stub, cfg.components, N);
     }
 
     const machineFilter = (cfg.machineFilter === 'before-mixed' && mixedStartTick != null)
@@ -87,7 +96,7 @@ export function buildOilPhase(runDir, rocketLaunchTick, phases) {
       : null;
 
     const row = buildRecipeRow(mp, buf, inv, cfg.recipe, gridTicks, machineFilter);
-    return { ...row, ...display };
+    return { ...row, ...stub };
   });
 
   return {
@@ -103,16 +112,16 @@ export function buildOilPhase(runDir, rocketLaunchTick, phases) {
 // own `actual` / `cum` so the renderer can stack them in distinct colors. Loss
 // arrays are merged across components — itemsByLoss / fluidsByLoss become the
 // union sorted by combined-loss total, matching the order the rate stack uses.
-function buildCombinedRow(mp, gridTicks, display, componentCfgs, N) {
-  const outputCounts = mp ? null : null; // suppress unused-var lint; outputCount lookup happens per component
+//
+// Per-component label/color are NOT baked here; the runtime widget looks them
+// up by recipe from the row's display config in gameData.
+function buildCombinedRow(mp, gridTicks, stub, componentCfgs, N) {
   const components = componentCfgs.map(c => {
     const outputCount = RECIPES_GAME_DATA.outputCount[c.recipe] ?? 1;
     const craftTime = RECIPES_GAME_DATA.craftTimes?.[c.recipe] ?? null;
     const series = buildProductionSeries(mp, c.recipe, gridTicks, outputCount, craftTime);
     return {
       recipe: c.recipe,
-      label: c.label,
-      color: c.color,
       actual: series.actual,
       potential: series.potential,
       cum: series.cum,
@@ -125,7 +134,6 @@ function buildCombinedRow(mp, gridTicks, display, componentCfgs, N) {
       statusLoss: series.statusLoss,
     };
   });
-  void outputCounts;
 
   const sumPair = (a, b) => a.map((v, i) => +(v + b[i]).toFixed(2));
   const sumIntPair = (a, b) => a.map((v, i) => v + b[i]);
@@ -174,7 +182,7 @@ function buildCombinedRow(mp, gridTicks, display, componentCfgs, N) {
   const finalCum      = cum[cum.length - 1] ?? 0;
 
   return {
-    ...display,
+    ...stub,
     recipe: components[0].recipe,
     chestCount: 0,
     finalCum,
@@ -192,10 +200,11 @@ function buildCombinedRow(mp, gridTicks, display, componentCfgs, N) {
     cum,
     buffer: new Array(N).fill(0),
     bufferWithInv: new Array(N).fill(0),
+    bufferLimit: null,
+    peakBufferLimit: 0,
+    showBufferLimit: false,
     components: components.map(c => ({
       recipe: c.recipe,
-      label: c.label,
-      color: c.color,
       actual: c.actual,
       cum: c.cum,
       peakActual: +c.peakActual.toFixed(2),

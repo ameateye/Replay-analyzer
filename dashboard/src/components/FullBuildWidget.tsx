@@ -19,6 +19,7 @@ import type { Run } from '../data';
 import { COLORS, FONT, fmtTimeNoSec } from '../theme';
 import { ProductionRow, type ProductionMode, type Recipe } from './ProductionWidget';
 import { ChartTooltip, type TooltipState } from './Tooltip';
+import { useGameData } from '../server/GameDataContext';
 import './EndGameWidgets.css';
 
 const W = 1500;
@@ -29,27 +30,20 @@ const ROW_H = 78;
 const ROW_GAP = 6;
 const X_AXIS_H = 32;
 
-type FullBuildRow = Recipe & {
-  key: string;
-  group: string;
-  label: string;
-  color: string;
-  mode: ProductionMode;
-};
-
-type FullBuildGroup = { id: string; label: string };
+// Display meta (label/color/group) is looked up at runtime from gameData.
+type FullBuildRow = Recipe & { key: string; mode: ProductionMode };
 
 type FullBuildPhaseData = {
   durationMin: number;
   startMin: number;
   endMin: number | null;
   minutes: number[];
-  groups: FullBuildGroup[];
   rows: FullBuildRow[];
 };
 
 export function FullBuildWidget({ run }: { run: Run }) {
   const fb = run.fullBuildPhase as FullBuildPhaseData | null | undefined;
+  const gameData = useGameData();
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
   const [groupId, setGroupId] = useState<string | null>(null);
@@ -62,9 +56,15 @@ export function FullBuildWidget({ run }: { run: Run }) {
 
   if (!fb) return null;
 
-  const groups = fb.groups?.length ? fb.groups : [{ id: 'purple', label: 'Purple' }];
+  const cfg = gameData.recipes.fullBuildDisplay;
+  const groups = cfg?.groups?.length ? cfg.groups : [{ id: 'purple', label: 'Purple' }];
   const activeGroup = groupId ?? groups[0].id;
-  const rows = fb.rows.filter(r => (r.group ?? 'purple') === activeGroup);
+  const displayByKey = new Map(cfg?.rows?.map(r => [r.key, r]) ?? []);
+  const rows = fb.rows
+    .map(r => ({ row: r, display: displayByKey.get(r.key) }))
+    .filter((entry): entry is { row: FullBuildRow; display: NonNullable<typeof entry.display> } =>
+      entry.display != null && (entry.display.group ?? 'purple') === activeGroup,
+    );
 
   const totalH = TOP_PAD + rows.length * ROW_H + Math.max(0, rows.length - 1) * ROW_GAP + X_AXIS_H + TOP_PAD;
   const xTickValues = range(0, run.durationMin + 0.001, 15);
@@ -108,14 +108,14 @@ export function FullBuildWidget({ run }: { run: Run }) {
         <svg viewBox={`0 0 ${W} ${totalH}`} preserveAspectRatio="xMidYMid meet">
           <rect width={W} height={totalH} fill={COLORS.bg} />
 
-          {rows.map((r, i) => {
+          {rows.map(({ row, display }, i) => {
             const top = TOP_PAD + i * (ROW_H + ROW_GAP);
             return (
-              <Group key={r.key} top={top}>
+              <Group key={row.key} top={top}>
                 <ProductionRow
-                  recipe={r}
+                  recipe={row}
                   minutes={fb.minutes}
-                  mode={r.mode}
+                  mode={row.mode}
                   xScale={xScale}
                   innerW={innerW}
                   rowH={ROW_H}
@@ -124,7 +124,8 @@ export function FullBuildWidget({ run }: { run: Run }) {
                   totalW={W}
                   containerRef={containerRef}
                   setTooltip={setTooltip}
-                  metaOverride={{ label: r.label, color: r.color }}
+                  metaOverride={{ label: display.label, color: display.color }}
+                  componentMeta={display.components}
                 />
               </Group>
             );

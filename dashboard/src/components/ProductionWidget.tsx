@@ -12,6 +12,7 @@ import { Group } from '@visx/group';
 import { scaleLinear } from '@visx/scale';
 import { LinePath, AreaClosed } from '@visx/shape';
 import { bisector } from 'd3-array';
+import { curveStepAfter } from 'd3-shape';
 import type { ScaleLinear } from 'd3-scale';
 import { useGameData } from '../server/GameDataContext';
 import { recipeMeta } from '../server/gameData';
@@ -27,16 +28,18 @@ export type ProductionMode = 'rate' | 'cum' | 'buffer' | 'fluid-buffer';
 type StatusKey = 'no_ingredients' | 'no_fuel' | 'full_output' | 'low_power' | 'unknown';
 
 // One stacked source within a combined rate row (e.g. basic + advanced oil
-// processing under a single "Refinery throughput" row).
+// processing under a single "Refinery throughput" row). Per-component
+// label/color come from the runtime display config (componentMeta prop), not
+// the per-run JSON, so editing recipes.json is enough to recolor.
 export type RecipeComponent = {
   recipe: string;
-  label: string;
-  color: string;
   actual: number[];
   cum: number[];
   peakActual: number;
   finalCum: number;
 };
+
+export type ComponentMeta = { recipe: string; label: string; color: string };
 
 // Per-recipe series. Display meta (label, color) lives in game-data and is
 // looked up at render time via recipeMeta(); see src/server/gameData.ts.
@@ -58,6 +61,13 @@ export type Recipe = {
   cum: number[];
   buffer: number[];
   bufferWithInv: number[];
+  // Buffer-limit reference. Per-tick chest/tank capacity (sum of buffers
+  // built by tick i). Only populated when the chest buffer reaches the
+  // approach threshold of capacity at some moment in the run — that's the
+  // gate for rendering the dashed limit line in buffer / fluid-buffer modes.
+  bufferLimit: number[] | null;
+  peakBufferLimit: number;
+  showBufferLimit: boolean;
   // Optional: when a row aggregates multiple sources, components carries the
   // per-source actual + cum so rate-mode can stack them in distinct colors.
   components?: RecipeComponent[];
@@ -80,6 +90,10 @@ type Props = {
   // rate row and a cumulative row in the oil-phase widget) so recipeMeta()'s
   // single recipe→meta lookup can't distinguish them.
   metaOverride?: { label: string; color: string };
+  // Per-component display meta (label/color), keyed by recipe. Used when the
+  // row aggregates multiple sources and the rate stack needs distinct colors
+  // per source.
+  componentMeta?: ComponentMeta[];
 };
 
 const bisectMinute = bisector<number, number>(m => m).left;
@@ -112,18 +126,34 @@ export function ProductionRow({
   containerRef,
   setTooltip,
   metaOverride,
+  componentMeta,
 }: Props) {
   const gameData = useGameData();
   const lookupMeta = recipeMeta(gameData, recipe.recipe);
   const meta = metaOverride
     ? { recipe: recipe.recipe, label: metaOverride.label, color: metaOverride.color }
     : lookupMeta;
+  // Combine the per-component data series (from the per-run JSON) with
+  // per-component display meta (from runtime gameData) so the rate stack and
+  // the rate-tooltip "sources" rows can use stable label/color while still
+  // letting recipes.json edits take effect on reload.
+  const renderComponents = useMemo(
+    () => recipe.components?.map(c => {
+      const m = componentMeta?.find(x => x.recipe === c.recipe);
+      return { ...c, label: m?.label ?? c.recipe, color: m?.color ?? '#999999' };
+    }),
+    [recipe.components, componentMeta],
+  );
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
+  const isBufferMode = mode === 'buffer' || mode === 'fluid-buffer';
+  const showLimit = isBufferMode && recipe.showBufferLimit && recipe.bufferLimit != null;
   const peak = mode === 'rate'
     ? Math.max(recipe.peakPotential, recipe.peakActual)
     : mode === 'cum'
     ? recipe.finalCum
+    : showLimit
+    ? Math.max(recipe.peakBufferWithInv, recipe.peakBufferLimit)
     : recipe.peakBufferWithInv;
 
   const yScale = useMemo(
@@ -150,7 +180,7 @@ export function ProductionRow({
       x,
       y,
       placement: 'top',
-      content: buildProductionTooltip(recipe, meta, minutes, idx, mode),
+      content: buildProductionTooltip(recipe, meta, minutes, idx, mode, renderComponents),
     });
   };
 
@@ -242,7 +272,7 @@ export function ProductionRow({
         />
 
         {mode === 'rate'
-          ? renderRateMode(recipe, minutes, xScale, yScale, rowH)
+          ? renderRateMode(recipe, renderComponents, minutes, xScale, yScale, rowH)
           : renderLineMode(recipe, meta.color, minutes, xScale, yScale, mode === 'cum' ? 'cum' : 'buffer')}
 
         {/* Compact y-axis tick: max value at top */}
@@ -300,12 +330,15 @@ function nearestMinute(minutes: number[], i: number, m: number): number {
   return m - minutes[i - 1] < minutes[i] - m ? i - 1 : i;
 }
 
+type RenderComponent = RecipeComponent & { label: string; color: string };
+
 function buildProductionTooltip(
   recipe: Recipe,
   meta: { label: string; color: string },
   minutes: number[],
   i: number,
   mode: ProductionMode,
+  renderComponents?: RenderComponent[],
 ) {
   const t = fmtTime(minutes[i]);
   const actual = recipe.actual[i];
@@ -356,9 +389,10 @@ function buildProductionTooltip(
         </div>
       )}
 
-      {mode === 'rate' && renderRateDetails(recipe, i, potential, gap)}
+      {mode === 'rate' && renderRateDetails(recipe, i, potential, gap, renderComponents)}
       {mode === 'cum' && renderProductionDetails(recipe, cum)}
-      {mode === 'buffer' && renderBufferDetails(box, inInv)}
+      {mode === 'buffer' && renderBufferDetails(box, inInv, recipe, i)}
+      {mode === 'fluid-buffer' && renderFluidBufferDetails(recipe, i)}
     </>
   );
 }
@@ -390,7 +424,13 @@ function Tab({
   );
 }
 
-function renderRateDetails(recipe: Recipe, i: number, potential: number, gap: number) {
+function renderRateDetails(
+  recipe: Recipe,
+  i: number,
+  potential: number,
+  gap: number,
+  renderComponents?: RenderComponent[],
+) {
   type Loss = { color: string; label: string; value: number };
   const losses: Loss[] = [];
   for (const name of recipe.itemsByLoss) {
@@ -417,12 +457,12 @@ function renderRateDetails(recipe: Recipe, i: number, potential: number, gap: nu
       {gap > 0 && (
         <TooltipRow label="gap" value={`${formatRate(gap)} /min`} muted />
       )}
-      {recipe.components && recipe.components.length > 0 && (
+      {renderComponents && renderComponents.length > 0 && (
         <>
           <div className="chart-tooltip__details-label">sources</div>
-          {recipe.components.map(c => (
+          {renderComponents.map(c => (
             <TooltipRow
-              key={c.label}
+              key={c.recipe}
               color={c.color}
               label={c.label}
               value={`${formatRate(c.actual[i])} /min`}
@@ -458,12 +498,36 @@ function renderProductionDetails(recipe: Recipe, cum: number) {
   );
 }
 
-function renderBufferDetails(box: number, inInv: number) {
+function renderBufferDetails(box: number, inInv: number, recipe: Recipe, i: number) {
+  const limit = recipe.showBufferLimit && recipe.bufferLimit ? recipe.bufferLimit[i] : null;
   return (
     <>
       <div className="chart-tooltip__sep" />
       <TooltipRow label="box only" value={box.toLocaleString('en-US')} muted />
       <TooltipRow label="in inventory" value={inInv.toLocaleString('en-US')} muted />
+      {limit != null && limit > 0 && (
+        <TooltipRow
+          label="chest limit"
+          value={`${limit.toLocaleString('en-US')} (${Math.round((box / limit) * 100)}%)`}
+          muted
+        />
+      )}
+    </>
+  );
+}
+
+function renderFluidBufferDetails(recipe: Recipe, i: number) {
+  const limit = recipe.showBufferLimit && recipe.bufferLimit ? recipe.bufferLimit[i] : null;
+  if (limit == null || limit <= 0) return null;
+  const buf = recipe.bufferWithInv[i];
+  return (
+    <>
+      <div className="chart-tooltip__sep" />
+      <TooltipRow
+        label="tank limit"
+        value={`${limit.toLocaleString('en-US')} (${Math.round((buf / limit) * 100)}%)`}
+        muted
+      />
     </>
   );
 }
@@ -502,20 +566,41 @@ function renderLineMode(
     );
   }
 
+  // buffer / fluid-buffer: draw the limit step-line first (under), then the
+  // buffer line on top.
+  const limitPoints = recipe.showBufferLimit && recipe.bufferLimit
+    ? minutes.map((m, i) => ({ minute: m, value: recipe.bufferLimit![i] }))
+    : null;
+
   return (
-    <LinePath
-      data={points}
-      x={p => xScale(p.minute)}
-      y={p => yScale(p.value)}
-      stroke={color}
-      strokeWidth={1.5}
-      strokeOpacity={0.95}
-    />
+    <>
+      {limitPoints && (
+        <LinePath
+          data={limitPoints}
+          x={p => xScale(p.minute)}
+          y={p => yScale(p.value)}
+          curve={curveStepAfter}
+          stroke={COLORS.text}
+          strokeWidth={1}
+          strokeOpacity={0.55}
+          strokeDasharray="3 2"
+        />
+      )}
+      <LinePath
+        data={points}
+        x={p => xScale(p.minute)}
+        y={p => yScale(p.value)}
+        stroke={color}
+        strokeWidth={1.5}
+        strokeOpacity={0.95}
+      />
+    </>
   );
 }
 
 function renderRateMode(
   recipe: Recipe,
+  renderComponents: RenderComponent[] | undefined,
   minutes: number[],
   xScale: ScaleLinear<number, number>,
   yScale: ScaleLinear<number, number>,
@@ -529,12 +614,12 @@ function renderRateMode(
 
   // Component-stacked actual: bottom-up bands one per source, summing to
   // recipe.actual. When absent, fall back to a single teal area.
-  const componentLayers = recipe.components && recipe.components.length > 0
-    ? recipe.components.map((comp, idx) => {
+  const componentLayers = renderComponents && renderComponents.length > 0
+    ? renderComponents.map((comp, idx) => {
         const layer: Layer[] = new Array(N);
         for (let i = 0; i < N; i++) {
           let y0 = 0;
-          for (let j = 0; j < idx; j++) y0 += recipe.components![j].actual[i];
+          for (let j = 0; j < idx; j++) y0 += renderComponents[j].actual[i];
           const here = comp.actual[i];
           layer[i] = { minute: minutes[i], y0, y1: y0 + here, defined: here > 0 };
         }
@@ -675,10 +760,10 @@ function niceCeiling(v: number): number {
   const exp = Math.floor(Math.log10(v));
   const base = Math.pow(10, exp);
   const scaled = v / base;
-  let stepped: number;
-  if (scaled <= 1) stepped = 1;
-  else if (scaled <= 2) stepped = 2;
-  else if (scaled <= 5) stepped = 5;
-  else stepped = 10;
+  // Finer steps than 1/2/5/10 — without 6 and 8, values like 55k (peak 50k +
+  // 10% pad, common when the buffer sits at its limit) round all the way up
+  // to 100k and waste half the row.
+  const steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  const stepped = steps.find(s => scaled <= s) ?? 10;
   return stepped * base;
 }

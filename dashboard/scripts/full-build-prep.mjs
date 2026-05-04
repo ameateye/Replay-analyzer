@@ -48,13 +48,10 @@ export function buildFullBuildPhase(runDir, rocketLaunchTick, phases) {
   const minutes = gridTicks.map(t => +(t / 3600).toFixed(4));
 
   const rows = config.map(cfg => {
-    const display = {
-      key: cfg.key,
-      group: cfg.group ?? 'purple',
-      label: cfg.label,
-      color: cfg.color,
-      mode: cfg.mode,
-    };
+    // key + mode kept; the runtime widget pulls label / color / group from
+    // gameData.recipes.fullBuildDisplay so editing recipes.json doesn't
+    // require a prep rebuild.
+    const stub = { key: cfg.key, mode: cfg.mode };
 
     const machineFilter = cfg.machineFilter === 'after-full-build-start'
       ? (m => m.timeBuilt >= fullBuildStartTick - period)
@@ -71,7 +68,7 @@ export function buildFullBuildPhase(runDir, rocketLaunchTick, phases) {
       row.peakBufferWithInv = row.peakBuffer;
     }
 
-    return { ...row, ...display };
+    return { ...row, ...stub };
   });
 
   return {

@@ -15,6 +15,26 @@ export type RecipeOutputCount = Record<string, number>;
 export type EndGameRecipeDisplay = { recipe: string; label: string; color: string };
 export type PhaseMeta = { name: string; color: string };
 
+// Display config for the oil-phase / full-build widgets. Keyed by row `key`
+// (which the per-run JSON also stores), so editing label/color/group/mode in
+// recipes.json takes effect on the next page reload — no prep rebuild needed.
+// Combined rows (rate-mode rows that aggregate multiple recipes) carry per-
+// component label/color too.
+export type ComponentDisplay = { recipe: string; label: string; color: string };
+export type PhaseRowDisplay = {
+  key: string;
+  group: string;
+  recipe: string;
+  label: string;
+  color: string;
+  mode: string;
+  components?: ComponentDisplay[];
+  excludeInventory?: boolean;
+  machineFilter?: string;
+};
+export type PhaseGroupDisplay = { id: string; label: string };
+export type PhaseDisplay = { groups: PhaseGroupDisplay[]; rows: PhaseRowDisplay[] };
+
 export type GameData = {
   techIcons: TechIconMap;
   techRequirements: TechRequirementMap;
@@ -26,6 +46,8 @@ export type GameData = {
     outputCount: RecipeOutputCount;
     endGameDisplay: EndGameRecipeDisplay[];
     mixedSegmentDisplay: EndGameRecipeDisplay[];
+    oilPhaseDisplay: PhaseDisplay;
+    fullBuildDisplay: PhaseDisplay;
   };
   buildPhases: {
     baseMachineTypes: string[];
@@ -67,6 +89,15 @@ export function recipeMeta(gameData: GameData, recipe: string): EndGameRecipeDis
          ?? gameData.recipes.mixedSegmentDisplay.find(r => r.recipe === recipe);
   if (m) return m;
   return { recipe, label: recipe, color: '#999999' };
+}
+
+export function phaseRowDisplay(
+  gameData: GameData,
+  scope: 'oilPhase' | 'fullBuild',
+  key: string,
+): PhaseRowDisplay | null {
+  const cfg = scope === 'oilPhase' ? gameData.recipes.oilPhaseDisplay : gameData.recipes.fullBuildDisplay;
+  return cfg?.rows.find(r => r.key === key) ?? null;
 }
 
 export function phaseColor(gameData: GameData, phaseName: string): string {

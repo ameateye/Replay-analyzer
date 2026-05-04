@@ -16,12 +16,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { buildProductionSeries } from './end-game/production.mjs';
-import { buildBufferSeries } from './end-game/buffer.mjs';
+import { buildBufferSeries, bufferApproachesCapacity } from './end-game/buffer.mjs';
 import { buildPlayerInventorySeries } from './end-game/inventory.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'recipes.json');
 const RECIPES_GAME_DATA = JSON.parse(fs.readFileSync(RECIPES_PATH, 'utf8'));
+
+export const CAPACITY_CFG = {
+  chestSlots: RECIPES_GAME_DATA.chestSlots ?? {},
+  stackSizes: RECIPES_GAME_DATA.stackSizes ?? {},
+  tankCapacity: RECIPES_GAME_DATA.tankCapacity ?? 25000,
+};
 
 // Builds a single Recipe-shaped row used by ProductionRow on the React side.
 // The optional `machineFilter` lets callers restrict production to a subset
@@ -33,10 +39,11 @@ export function buildRecipeRow(mp, buf, inv, recipe, gridTicks, machineFilter = 
     ? { ...mp, machines: mp.machines.filter(machineFilter) }
     : mp;
   const rate = buildProductionSeries(mpForRate, recipe, gridTicks, outputCount, craftTime);
-  const buffer = buildBufferSeries(buf, recipe, gridTicks);
+  const buffer = buildBufferSeries(buf, recipe, gridTicks, 'chest', CAPACITY_CFG);
   const player = buildPlayerInventorySeries(inv, recipe, gridTicks);
   const bufferWithInv = buffer.buffer.map((b, i) => b + player.inv[i]);
   const peakBufferWithInv = bufferWithInv.reduce((m, v) => Math.max(m, v), 0);
+  const showBufferLimit = bufferApproachesCapacity(buffer.buffer, buffer.capacity);
 
   return {
     recipe,
@@ -58,6 +65,9 @@ export function buildRecipeRow(mp, buf, inv, recipe, gridTicks, machineFilter = 
     cum: rate.cum,
     buffer: buffer.buffer.map(v => Math.round(v)),
     bufferWithInv: bufferWithInv.map(v => Math.round(v)),
+    bufferLimit: showBufferLimit ? buffer.capacity.map(v => Math.round(v)) : null,
+    peakBufferLimit: showBufferLimit ? Math.round(buffer.peakCapacity) : 0,
+    showBufferLimit,
   };
 }
 

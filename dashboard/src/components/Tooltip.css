@@ -1,24 +1,44 @@
+/* Factorio info panel — beveled dark frame with cream text and yellow
+   accents. Matches the in-game tooltip look. */
 .chart-tooltip {
   position: absolute;
   z-index: 10;
   pointer-events: none;
-  background: rgba(32, 33, 36, 0.94);
-  color: #fbfbf9;
-  font-family: 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  background: #1f1f1d;
+  color: #ffe6c0;
+  font-family: 'Titillium Web', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
   font-size: 12px;
   line-height: 1.45;
-  padding: 8px 10px;
-  border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  padding: 8px 11px 9px;
+  border-radius: 0;
+  border-top: 1px solid #5a5957;
+  border-left: 1px solid #5a5957;
+  border-right: 1px solid #0a0a09;
+  border-bottom: 1px solid #0a0a09;
+  box-shadow: 0 0 0 1px #0a0a09,
+              0 8px 22px rgba(0, 0, 0, 0.55);
   white-space: nowrap;
   min-width: 220px;
 }
 
+.chart-tooltip::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 2px;
+  background: #ff9d28;
+}
+
 .chart-tooltip__title {
-  font-weight: 600;
+  font-weight: 700;
   color: #ffffff;
-  font-size: 12px;
-  margin-bottom: 4px;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+  margin-bottom: 5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #44423d;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -26,9 +46,10 @@
 }
 
 .chart-tooltip__title .time {
-  font-weight: 400;
-  color: #c7c8ca;
+  font-weight: 600;
+  color: #fbbb27;
   font-variant-numeric: tabular-nums;
+  font-size: 12px;
 }
 
 .chart-tooltip__row {
@@ -40,7 +61,7 @@
 }
 
 .chart-tooltip__row--muted {
-  color: #c7c8ca;
+  color: #a09c97;
 }
 
 .chart-tooltip__row--active .chart-tooltip__label,
@@ -59,20 +80,20 @@
 
 .chart-tooltip__swatch {
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
+  width: 9px;
+  height: 9px;
   margin-right: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.45);
 }
 
 .chart-tooltip__sep {
   height: 1px;
-  background: rgba(255, 255, 255, 0.13);
-  margin: 6px -2px;
+  background: #44423d;
+  margin: 6px -3px;
 }
 
 .chart-tooltip__note {
-  color: #c7c8ca;
+  color: #a09c97;
   font-style: italic;
   font-size: 11.5px;
 }
@@ -83,41 +104,49 @@
 .chart-tooltip__tabs {
   display: flex;
   gap: 3px;
-  margin: 6px -2px 4px;
+  margin: 6px -3px 5px;
 }
 
 .chart-tooltip__tab {
   flex: 1;
   min-width: 0;
   padding: 5px 8px 6px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.05);
-  border-top: 2px solid transparent;
+  background: #2a2a28;
+  border-top: 1px solid #44423d;
+  border-left: 1px solid #44423d;
+  border-right: 1px solid #0a0a09;
+  border-bottom: 1px solid #0a0a09;
   text-align: left;
 }
 
 .chart-tooltip__tab--active {
-  background: rgba(255, 255, 255, 0.16);
+  background: #4a3a1a;
+  border-top: 1px solid #ff9d28;
+  border-left: 1px solid #ff9d28;
+  border-right: 1px solid #0a0a09;
+  border-bottom: 1px solid #0a0a09;
 }
 
 .chart-tooltip__tab-label {
   display: flex;
   align-items: center;
-  font-size: 10px;
-  letter-spacing: 0.6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
   text-transform: uppercase;
-  color: #c7c8ca;
+  color: #a09c97;
   margin-bottom: 2px;
 }
 
 .chart-tooltip__tab--active .chart-tooltip__tab-label {
-  color: #ffffff;
+  color: #fbbb27;
 }
 
 .chart-tooltip__tab-value {
   font-size: 13px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: #e8e8ea;
+  color: #c9bea3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -130,15 +159,16 @@
 
 .chart-tooltip__tab-unit {
   font-size: 10px;
-  color: #c7c8ca;
+  color: #a09c97;
   margin-left: 2px;
   font-weight: 400;
 }
 
 .chart-tooltip__details-label {
-  font-size: 10px;
-  letter-spacing: 0.6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
   text-transform: uppercase;
-  color: #9aa0a6;
-  margin: 4px 0 3px;
+  color: #fbbb27;
+  margin: 5px 0 3px;
 }

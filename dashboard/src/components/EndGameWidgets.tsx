@@ -27,10 +27,20 @@ const ROW_GAP = 6;
 const X_AXIS_H = 32;
 
 const TABS: { mode: ProductionMode; label: string }[] = [
-  { mode: 'rate',   label: 'Production rate' },
-  { mode: 'cum',    label: 'Cumulative' },
-  { mode: 'buffer', label: 'Buffer (incl. player inv.)' },
+  { mode: 'rate',   label: 'Rate' },
+  { mode: 'cum',    label: 'Total' },
+  { mode: 'buffer', label: 'Buffer' },
 ];
+
+function KeyStripRate() {
+  return (
+    <span className="end-game__sub-key">
+      <span className="key-item"><span className="key-swatch-fill" /> actual</span>
+      <span className="key-item"><span className="key-swatch-loss" /> stalls</span>
+      <span className="key-item"><span className="key-swatch-dash" /> potential</span>
+    </span>
+  );
+}
 
 export function EndGameWidgets({ run }: { run: Run }) {
   const [mode, setMode] = useState<ProductionMode>('rate');
@@ -58,10 +68,11 @@ export function EndGameWidgets({ run }: { run: Run }) {
     <section className="end-game">
       <header className="end-game__header">
         <div>
-          <h2>End-game production</h2>
+          <h2>Late game · production</h2>
           <span className="end-game__sub">
             Blue chips · LDS · rocket fuel · purple science · yellow science
           </span>
+          {mode === 'rate' && <KeyStripRate />}
         </div>
         <div className="end-game__tabs" role="tablist">
           {TABS.map(t => (

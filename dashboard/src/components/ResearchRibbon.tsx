@@ -134,10 +134,12 @@ export function ResearchRibbon({
         y={iconStripH / 2 + 4}
         textAnchor="end"
         fontFamily={FONT}
-        fontSize={12}
-        fill={COLORS.text}
+        fontSize={11}
+        fontWeight={700}
+        letterSpacing={0.9}
+        fill={COLORS.textStrong}
       >
-        research
+        RESEARCH
       </text>
       <line
         x1={0}
@@ -173,7 +175,7 @@ export function ResearchRibbon({
         const rowY = packsTop + idx * (ROW_H + ROW_GAP);
         return (
           <g key={pack}>
-            <rect x={0} y={rowY} width={innerW} height={ROW_H} fill="#f3f0e8" opacity={0.6} />
+            <rect x={0} y={rowY} width={innerW} height={ROW_H} fill="#2a2a28" opacity={0.85} />
             <text
               x={-10}
               y={rowY + ROW_H - 3}

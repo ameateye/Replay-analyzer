@@ -57,14 +57,23 @@ export function OilPhaseWidget({ run }: { run: Run }) {
   const totalH = TOP_PAD + rows.length * ROW_H + Math.max(0, rows.length - 1) * ROW_GAP + X_AXIS_H + TOP_PAD;
   const xTickValues = range(0, run.durationMin + 0.001, 15);
 
+  const hasRateRow = rows.some(r => r.mode === 'rate');
+
   return (
     <section className="end-game">
       <header className="end-game__header">
         <div>
           <h2>Oil phase</h2>
           <span className="end-game__sub">
-            Refinery throughput · oil buffers · red chips (oil-phase line) · tier-1 modules · blue science
+            Refinery throughput · oil buffers · red chips · tier-1 modules · blue science
           </span>
+          {hasRateRow && (
+            <span className="end-game__sub-key">
+              <span className="key-item"><span className="key-swatch-fill" /> actual</span>
+              <span className="key-item"><span className="key-swatch-loss" /> stalls</span>
+              <span className="key-item"><span className="key-swatch-dash" /> potential</span>
+            </span>
+          )}
         </div>
         <div className="end-game__tabs" role="tablist">
           {groups.map(g => (

@@ -1,26 +1,40 @@
-// Visual tokens shared across the dashboard. Keep aligned with the existing
-// chart aesthetic (light theme, Segoe UI, dim text #5f6368 / strong #202124).
+// Factorio-styled dark UI tokens. Panel/inset/bevel triplet matches the
+// 3-tone frame system the game uses for every UI window. Chart series
+// colors are tuned to read against the dark inset panels.
 //
 // Per-pack / per-recipe / per-phase colors live in game-data/*.json and are
 // looked up at runtime via useGameData() — see src/server/gameData.ts.
 
 export const COLORS = {
-  bg: '#fbfbf9',
-  surface: '#ffffff',
-  border: '#e5e5e2',
-  grid: '#ececec',
-  axis: '#9aa0a6',
-  text: '#5f6368',
-  textStrong: '#202124',
-  potentialFill: '#e8f7fa',
-  potentialLine: '#67e8f9',
-  saturated: '#0e7490',
-  saturatedLine: '#155e75',
-  idle: '#dcc8a0',
-  idleBorder: '#a8956c',
+  // Surfaces
+  bg: '#1a1816',           // desktop background
+  panel: '#313130',        // primary panel face
+  surface: '#232322',      // inset chart-plot face (recessed)
+  surfaceMuted: '#3c3c3a',
+  border: '#0a0a09',       // outer shadow edge
+  borderStrong: '#5a5957', // inner highlight edge
+
+  // Lines / labels in chart area
+  grid: '#3a3835',
+  axis: '#8a8478',
+  text: '#c9bea3',
+  textStrong: '#ffe6c0',
+
+  // Factorio brand accents
+  accent: '#ff9d28',
+  accentHot: '#fbbb27',
+  accentStrong: '#c4750e',
+
+  // Lab-saturation chart series — bumped for dark-bg legibility
+  potentialFill: '#0c4a5b',  // deep teal under total curve
+  potentialLine: '#67e8f9',  // bright cyan
+  saturated:     '#1e9bbf',  // active labs fill
+  saturatedLine: '#7dd3e8',  // active labs edge
+  idle:          '#6a5a3c',  // muted brown for "no research" overlay
+  idleBorder:    '#a8956c',
 };
 
-export const FONT = '"Segoe UI", Inter, system-ui, -apple-system, sans-serif';
+export const FONT = '"Titillium Web", "Segoe UI", Inter, system-ui, -apple-system, sans-serif';
 
 export function fmtTime(min: number): string {
   const total = Math.max(0, Math.round(min * 60));

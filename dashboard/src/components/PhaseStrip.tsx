@@ -51,9 +51,10 @@ export function PhaseStrip({
         y={14}
         textAnchor="end"
         fontFamily={FONT}
-        fontSize={12}
-        fill={COLORS.text}
-        letterSpacing={0.6}
+        fontSize={11}
+        fontWeight={700}
+        fill={COLORS.textStrong}
+        letterSpacing={0.9}
       >
         PHASES
       </text>
@@ -63,23 +64,22 @@ export function PhaseStrip({
         textAnchor="end"
         fontFamily={FONT}
         fontSize={9.5}
-        fill={COLORS.text}
-        letterSpacing={0.3}
-        opacity={0.75}
+        fill={COLORS.accentStrong}
+        letterSpacing={0.4}
       >
         click to load ↓
       </text>
       <g transform="translate(-18, 50)" style={{ cursor: 'help' }}>
         <title>{PHASE_INFO}</title>
-        <circle r={7} fill="none" stroke={COLORS.axis} strokeWidth={1} />
+        <circle r={7} fill="none" stroke={COLORS.borderStrong} strokeWidth={1} />
         <text
           textAnchor="middle"
           dominantBaseline="central"
           fontFamily={FONT}
           fontSize={10}
           fontStyle="italic"
-          fontWeight={600}
-          fill={COLORS.text}
+          fontWeight={700}
+          fill={COLORS.textStrong}
         >
           i
         </text>

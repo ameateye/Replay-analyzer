@@ -1,71 +1,148 @@
 .end-game {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--fac-panel);
+  border-top: 1px solid var(--fac-bevel-hi);
+  border-left: 1px solid var(--fac-bevel-hi);
+  border-right: 1px solid var(--fac-bevel-lo);
+  border-bottom: 1px solid var(--fac-bevel-lo);
+  border-radius: 0;
   margin-top: 18px;
   overflow: hidden;
 }
 
 .end-game__header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 22px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 22px 9px 24px;
   gap: 18px;
+  background: linear-gradient(180deg, #3d3d3a 0%, #2a2a28 100%);
+  border-bottom: 1px solid var(--fac-bevel-lo);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+              inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.end-game__header::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--fac-accent);
 }
 
 .end-game__header h2 {
   margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--fac-text);
 }
 
 .end-game__sub {
   display: block;
-  margin-top: 2px;
-  color: var(--text-dim);
-  font-size: 13px;
+  margin-top: 3px;
+  color: var(--fac-text-dim);
+  font-size: 12px;
+  letter-spacing: 0.2px;
 }
 
+.end-game__sub-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--fac-text-dim);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.end-game__sub-key .key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.end-game__sub-key .key-swatch-fill {
+  width: 14px;
+  height: 9px;
+  background: #1e9bbf;
+  display: inline-block;
+  opacity: 0.95;
+}
+
+.end-game__sub-key .key-swatch-loss {
+  width: 14px;
+  height: 9px;
+  background: #c8312a;
+  display: inline-block;
+  opacity: 0.7;
+}
+
+.end-game__sub-key .key-swatch-dash {
+  width: 16px;
+  height: 0;
+  border-top: 1.5px dashed #a09c97;
+  display: inline-block;
+}
+
+/* Factorio tab bar — recessed dark cradle holding raised tabs. */
 .end-game__tabs {
   display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
   flex-shrink: 0;
+  background: #1f1f1d;
+  padding: 2px;
+  gap: 2px;
+  border-top: 1px solid var(--fac-bevel-lo);
+  border-left: 1px solid var(--fac-bevel-lo);
+  border-right: 1px solid var(--fac-bevel-hi);
+  border-bottom: 1px solid var(--fac-bevel-hi);
 }
 
 .end-game__tab {
   appearance: none;
-  background: var(--surface);
-  border: none;
-  border-left: 1px solid var(--border);
-  padding: 6px 12px;
-  font-size: 13px;
+  background: var(--fac-panel-2);
+  border-top: 1px solid var(--fac-bevel-hi);
+  border-left: 1px solid var(--fac-bevel-hi);
+  border-right: 1px solid var(--fac-bevel-lo);
+  border-bottom: 1px solid var(--fac-bevel-lo);
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
   font-family: inherit;
-  color: var(--text-dim);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--fac-text);
   cursor: pointer;
-}
-
-.end-game__tab:first-child {
-  border-left: none;
+  transition: background 80ms linear, color 80ms linear;
 }
 
 .end-game__tab:hover {
-  background: #f3f3ef;
+  background: var(--fac-panel-3);
+  color: var(--fac-accent-hot);
 }
 
 .end-game__tab--active {
-  background: #ecedf2;
-  color: var(--text);
-  font-weight: 600;
+  background: var(--fac-accent);
+  color: #1a1611;
+  border-top: 1px solid var(--fac-bevel-lo);
+  border-left: 1px solid var(--fac-bevel-lo);
+  border-right: 1px solid #ffc06a;
+  border-bottom: 1px solid #ffc06a;
+}
+
+.end-game__tab--active:hover {
+  background: var(--fac-accent);
+  color: #1a1611;
 }
 
 .end-game__chart {
   width: 100%;
   position: relative;
+  background: var(--fac-panel);
 }
 
 .end-game__chart svg {

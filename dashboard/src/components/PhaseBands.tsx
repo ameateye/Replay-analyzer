@@ -20,7 +20,7 @@ export function PhaseBands({
   xScale,
   phases,
   showBoundaryLines = true,
-  bandOpacity = 0.10,
+  bandOpacity = 0.18,
 }: Props) {
   const gameData = useGameData();
   return (

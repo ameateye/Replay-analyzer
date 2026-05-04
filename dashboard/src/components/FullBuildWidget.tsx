@@ -84,6 +84,11 @@ export function FullBuildWidget({ run }: { run: Run }) {
           <span className="end-game__sub">
             {rangeText} · {subText}
           </span>
+          <span className="end-game__sub-key">
+            <span className="key-item"><span className="key-swatch-fill" /> actual</span>
+            <span className="key-item"><span className="key-swatch-loss" /> stalls</span>
+            <span className="key-item"><span className="key-swatch-dash" /> potential</span>
+          </span>
         </div>
         <div className="end-game__tabs" role="tablist">
           {groups.map(g => (

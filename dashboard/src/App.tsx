@@ -27,8 +27,15 @@ export function App() {
       <div className="dashboard">
         <header className="dashboard-header">
           <div>
-            <h1>Replay analyzer · {run.runName}</h1>
-            <span className="meta">{fmtTime(run.durationMin)}</span>
+            <h1>
+              <span className="title-accent">▸</span>
+              Replay analyzer
+              <span className="title-run">· {run.runName}</span>
+            </h1>
+            <span className="meta">
+              <span className="meta-label">run time</span>
+              {fmtTime(run.durationMin)}
+            </span>
           </div>
           {runs.length > 1 && (
             <div className="run-picker" role="tablist" aria-label="Select run">

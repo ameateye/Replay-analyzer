@@ -53,9 +53,14 @@ export function MixedSegmentWidget({ run }: { run: Run }) {
     <section className="end-game">
       <header className="end-game__header">
         <div>
-          <h2>Mixed segment</h2>
+          <h2>Mixed phase</h2>
           <span className="end-game__sub">
             {fmtTimeNoSec(ms.startMin)}–{fmtTimeNoSec(ms.endMin)} · own copper · iron from buffers · plastic from main · outputs LDS + BC
+          </span>
+          <span className="end-game__sub-key">
+            <span className="key-item"><span className="key-swatch-fill" /> actual</span>
+            <span className="key-item"><span className="key-swatch-loss" /> stalls</span>
+            <span className="key-item"><span className="key-swatch-dash" /> potential</span>
           </span>
         </div>
       </header>

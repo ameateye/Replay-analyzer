@@ -91,7 +91,9 @@ export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable
     <section className="run-overview">
       <header className="run-overview__header">
         <h2>Run overview</h2>
-        <span className="run-overview__sub">Lab saturation × strategic build phases</span>
+        <span className="run-overview__sub">
+          Research throughput · lab saturation · build phases
+        </span>
       </header>
       <div className="run-overview__chart" ref={containerRef}>
         <svg viewBox={`0 0 ${W} ${totalH}`} preserveAspectRatio="xMidYMid meet">

@@ -84,16 +84,18 @@ type Props = {
 
 const bisectMinute = bisector<number, number>(m => m).left;
 
-const ACTUAL_FILL = '#0e7490';
-const ACTUAL_LINE = '#155e75';
-const ITEM_PALETTE = ['#c8312a', '#e07854', '#a4682c', '#d97706', '#7c2d12', '#92400e'];
-const FLUID_PALETTE = ['#3aa8f0', '#67e8f9', '#155e75', '#5b21b6'];
+// Tuned for the Factorio-dark plot panel — bright cyan reads cleanly against
+// the inset slate-gray surface; the line is one notch lighter than the fill.
+const ACTUAL_FILL = '#1e9bbf';
+const ACTUAL_LINE = '#7dd3e8';
+const ITEM_PALETTE = ['#e74634', '#f3934e', '#cf833a', '#fbbb27', '#a23b1c', '#c4690b'];
+const FLUID_PALETTE = ['#5fbff4', '#67e8f9', '#3aa8f0', '#7d5bd1'];
 const STATUS_COLOR: Record<StatusKey, string> = {
-  no_ingredients: '#8b6f47',
-  no_fuel:        '#2d2d2d',
-  full_output:    '#f2c94f',
+  no_ingredients: '#a8865a',
+  no_fuel:        '#1a1a1a',
+  full_output:    '#fbbb27',
   low_power:      '#b14df5',
-  unknown:        '#9aa0a6',
+  unknown:        '#a09c97',
 };
 const LOSS_STATUS_ORDER: StatusKey[] = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
 
@@ -193,8 +195,9 @@ export function ProductionRow({
             boxSizing: 'border-box',
             fontFamily: FONT,
             fontSize: 12,
-            fontWeight: 600,
+            fontWeight: 700,
             color: COLORS.textStrong,
+            letterSpacing: '0.3px',
             lineHeight: 1.2,
             overflowWrap: 'break-word',
           }}

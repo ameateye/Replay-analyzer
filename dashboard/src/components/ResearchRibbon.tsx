@@ -175,7 +175,7 @@ export function ResearchRibbon({
         const rowY = packsTop + idx * (ROW_H + ROW_GAP);
         return (
           <g key={pack}>
-            <rect x={0} y={rowY} width={innerW} height={ROW_H} fill="#2a2a28" opacity={0.85} />
+            <rect x={0} y={rowY} width={innerW} height={ROW_H} fill="#262626" opacity={0.85} />
             <text
               x={-10}
               y={rowY + ROW_H - 3}

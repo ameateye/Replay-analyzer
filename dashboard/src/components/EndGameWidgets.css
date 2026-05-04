@@ -1,11 +1,10 @@
+/* In-game frame: dark gray face with near-black border + soft drop-shadow. */
 .end-game {
-  background: var(--fac-panel);
-  border-top: 1px solid var(--fac-bevel-hi);
-  border-left: 1px solid var(--fac-bevel-hi);
-  border-right: 1px solid var(--fac-bevel-lo);
-  border-bottom: 1px solid var(--fac-bevel-lo);
+  background-color: var(--fac-panel);
+  border: 4px solid var(--fac-border);
+  box-shadow: 0px 0px 3px 0px var(--fac-bg-deep);
   border-radius: 0;
-  margin-top: 18px;
+  margin-top: 24px;
   overflow: hidden;
 }
 
@@ -14,50 +13,40 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 22px 9px 24px;
+  padding: 12px 16px;
   gap: 18px;
-  background: linear-gradient(180deg, #3d3d3a 0%, #2a2a28 100%);
-  border-bottom: 1px solid var(--fac-bevel-lo);
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35),
-              inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
-
-.end-game__header::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--fac-accent);
+  background: var(--fac-panel-light);
+  border-bottom: 2px solid var(--fac-border);
+  box-shadow: inset 0 -1px 0 #161616,
+              inset 0 1px 0 #5a5a5a;
 }
 
 .end-game__header h2 {
   margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
   color: var(--fac-text);
 }
 
 .end-game__sub {
   display: block;
-  margin-top: 3px;
-  color: var(--fac-text-dim);
-  font-size: 12px;
-  letter-spacing: 0.2px;
+  margin-top: 2px;
+  color: var(--fac-text-muted);
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .end-game__sub-key {
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  margin-top: 7px;
+  margin-top: 6px;
   font-size: 11px;
-  color: var(--fac-text-dim);
+  color: var(--fac-text-muted);
   letter-spacing: 0.4px;
   text-transform: uppercase;
+  font-weight: 600;
 }
 
 .end-game__sub-key .key-item {
@@ -69,9 +58,8 @@
 .end-game__sub-key .key-swatch-fill {
   width: 14px;
   height: 9px;
-  background: #1e9bbf;
+  background: #2ea9c9;
   display: inline-block;
-  opacity: 0.95;
 }
 
 .end-game__sub-key .key-swatch-loss {
@@ -79,70 +67,84 @@
   height: 9px;
   background: #c8312a;
   display: inline-block;
-  opacity: 0.7;
 }
 
 .end-game__sub-key .key-swatch-dash {
   width: 16px;
   height: 0;
-  border-top: 1.5px dashed #a09c97;
+  border-top: 1.5px dashed #ffe6c0;
   display: inline-block;
 }
 
-/* Factorio tab bar — recessed dark cradle holding raised tabs. */
+/* In-game tab strip — neutral gray face with a 5-edge inset bevel. */
 .end-game__tabs {
   display: inline-flex;
   flex-shrink: 0;
-  background: #1f1f1d;
-  padding: 2px;
-  gap: 2px;
-  border-top: 1px solid var(--fac-bevel-lo);
-  border-left: 1px solid var(--fac-bevel-lo);
-  border-right: 1px solid var(--fac-bevel-hi);
-  border-bottom: 1px solid var(--fac-bevel-hi);
+  gap: 4px;
 }
 
 .end-game__tab {
   appearance: none;
-  background: var(--fac-panel-2);
-  border-top: 1px solid var(--fac-bevel-hi);
-  border-left: 1px solid var(--fac-bevel-hi);
-  border-right: 1px solid var(--fac-bevel-lo);
-  border-bottom: 1px solid var(--fac-bevel-lo);
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
+  border: none;
+  padding: 9px 18px;
   font-family: inherit;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  color: var(--fac-text);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
   cursor: pointer;
-  transition: background 80ms linear, color 80ms linear;
+  border-radius: 4px 4px 0 0;
+  background-color: var(--fac-tab-bg);
+  color: var(--fac-tab-text);
+  box-shadow:
+    inset  0px  4px 1px -2px #c5c5c5,
+    inset  0px  4px 1px -2px #888888,
+    inset  0px -4px 1px -2px #2d2d2d,
+    inset  4px  0px 1px -2px #7a7a7a,
+    inset -4px  0px 1px -2px #1c1c1c;
+  transition: background-color 80ms linear, box-shadow 80ms linear;
 }
 
 .end-game__tab:hover {
-  background: var(--fac-panel-3);
-  color: var(--fac-accent-hot);
-}
-
-.end-game__tab--active {
-  background: var(--fac-accent);
-  color: #1a1611;
-  border-top: 1px solid var(--fac-bevel-lo);
-  border-left: 1px solid var(--fac-bevel-lo);
-  border-right: 1px solid #ffc06a;
-  border-bottom: 1px solid #ffc06a;
-}
-
-.end-game__tab--active:hover {
-  background: var(--fac-accent);
-  color: #1a1611;
-}
-
-.end-game__chart {
-  width: 100%;
+  background-color: var(--fac-accent);
+  color: var(--fac-tab-text);
+  box-shadow:
+    inset  0px  4px 1px -2px #d4c5ae,
+    inset  0px  4px 1px -2px #cf994b,
+    inset  0px -4px 1px -2px #4a300c,
+    inset  4px  0px 1px -2px #8b6325,
+    inset -4px  0px 1px -2px #4a300c,
+    0px 0px 8px var(--fac-accent);
   position: relative;
-  background: var(--fac-panel);
+  z-index: 1;
+}
+
+.end-game__tab--active,
+.end-game__tab--active:hover {
+  background-color: var(--fac-panel);
+  color: var(--fac-text);
+  box-shadow:
+    inset  0px  4px 1px -2px #686868,
+    inset  4px  0px 1px -2px #1c1c1c,
+    inset -4px  0px 1px -2px #1a1a1a,
+    0px 6px 4px var(--fac-panel),
+    0px 0px 4px #101010;
+}
+
+/* "Box inside the box" — recessed inset frame, same pattern as
+   .run-overview__chart so the chart plot regions in both panels remain
+   pixel-aligned (identical horizontal margin + padding). */
+.end-game__chart {
+  width: auto;
+  position: relative;
+  background: var(--fac-panel-inset);
+  margin: 8px;
+  padding: 6px 0;
+  border: 1px solid #050505;
+  box-shadow:
+    inset  0  2px 1px -1px #000000,
+    inset  2px 0  1px -1px #000000,
+    inset  0 -2px 1px -1px #4a4a4a,
+    inset -2px 0  1px -1px #4a4a4a;
 }
 
 .end-game__chart svg {

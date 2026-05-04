@@ -66,7 +66,7 @@ export function MixedSegmentWidget({ run }: { run: Run }) {
       </header>
       <div className="end-game__chart" ref={containerRef}>
         <svg viewBox={`0 0 ${W} ${totalH}`} preserveAspectRatio="xMidYMid meet">
-          <rect width={W} height={totalH} fill={COLORS.bg} />
+          <rect width={W} height={totalH} fill={COLORS.surface} />
 
           {ms.recipes.map((r, i) => {
             const top = TOP_PAD + i * (ROW_H + ROW_GAP);

@@ -1,38 +1,43 @@
-/* Factorio's HUD font is Titillium Web. Pull weights 400/600/700 — the bold
-   weight matches the bold all-caps headings used in the game. */
-@import url('https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700;900&display=swap');
+/* Match factorio.com — Titillium Web served from their CDN, same family the
+   site itself loads. */
+@import url('https://cdn.factorio.com/assets/fonts/titillium-web.css');
 
 :root {
-  /* Factorio panel system. The game frames everything with a 3-tone bevel:
-     a near-black outer shadow, a dark gray panel face, and a light bevel on
-     the top-left edge. Surfaces inside panels (chart plots, list bodies)
-     drop one tone darker so they read as "inset". */
-  --fac-bg:        #1a1816;   /* desktop / behind everything */
-  --fac-panel:     #313130;   /* primary panel face */
-  --fac-panel-2:   #3c3c3a;   /* raised inner surface (tabs, headers) */
-  --fac-panel-3:   #4a4a47;   /* hovered/active surface */
-  --fac-inset:     #232322;   /* sunk/recessed surface (plot panel) */
-  --fac-bevel-hi:  #5a5957;   /* top-left highlight */
-  --fac-bevel-lo:  #0a0a09;   /* bottom-right shadow */
+  /* In-game Factorio palette — neutral grays from the GUI sprite atlas, NOT
+     the factorio.com website's warm brown chrome. Cream caption color
+     preserved per data.raw style (`caption_color = {255, 230, 192}`). */
+  --fac-bg:           #191919;   /* viewport bg under main image */
+  --fac-bg-deep:      #0c0c0c;   /* near-black drop-shadow */
+  --fac-panel:        #313131;   /* default frame face */
+  --fac-panel-light:  #414141;   /* header / active frame */
+  --fac-panel-inset:  #1d1d1d;   /* recessed plot panel */
+  --fac-border:       #161616;   /* frame border (near-black, no brown) */
+  --fac-bevel-hi:     #8f8f8f;   /* inner highlight */
+  --fac-bevel-mid:    #686868;   /* tab inset highlight */
+  --fac-bevel-shade:  #0e0e0e;   /* tab inset shadow */
 
-  /* Text — Factorio cream + warm whites, dim mustard for muted. */
-  --fac-text:        #ffe6c0;
-  --fac-text-strong: #ffffff;
-  --fac-text-dim:    #a09c97;
+  /* Text — cream caption for headings (data.raw `caption_color`), off-white
+     body matching `gui white icon` `{227, 227, 227}` so it reads as softer
+     than pure white against the dark gray panel face. */
+  --fac-text:         #ffe6c0;
+  --fac-text-strong:  #e3e3e3;
+  --fac-text-body:    #d4d4d4;
+  --fac-text-dim:     #b8b8b8;
+  --fac-text-muted:   #7a7a7a;
 
-  /* Accents. Orange is the dominant signal color; yellow flags
-     headings/values; red marks danger/loss. */
-  --fac-accent:      #ff9d28;
-  --fac-accent-hot:  #fbbb27;
-  --fac-accent-deep: #c4750e;
-  --fac-accent-soft: #594b18;
+  /* Brand orange — used sparingly per game style (label accents, hover glow,
+     active markers). Not a surface color. */
+  --fac-accent:       #e39827;
+  --fac-accent-hot:   #f9b44b;
+  --fac-accent-warm:  #f1be64;
+  --fac-accent-glow:  #f9b44b;
 
-  /* Chart-area tones. */
-  --fac-grid:  #44423d;
-  --fac-axis:  #8a8478;
+  /* Tab gray (neutral, no warm undertone). */
+  --fac-tab-bg:       #8e8e8e;
+  --fac-tab-text:     #1d1c1d;
 
-  font-family: 'Titillium Web', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
-  color: var(--fac-text);
+  font-family: 'Titillium Web', sans-serif;
+  color: var(--fac-text-body);
   background: var(--fac-bg);
 }
 
@@ -44,18 +49,24 @@ html, body, #root {
   min-height: 100vh;
 }
 
-/* Factorio menu-style background: tiled concrete-plate texture, served from
-   /public so the URL works in both dev and production builds. A subtle radial
-   vignette darkens the corners — the same effect Factorio's main menu uses
-   to focus attention on the central UI. */
+/* Background: Factorio main-menu style — the in-game menu pins a faded
+   factory scene behind translucent panels. We pin the image to the viewport
+   with `background-attachment: fixed` + `cover` so it always fills the
+   screen on long-scroll. A neutral dark vignette deepens the edges (no warm
+   brown — game UI never uses it). The concrete-tile SVG is a fallback if
+   the CDN image fails. */
 body {
   background-color: var(--fac-bg);
   background-image:
-    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.55) 100%),
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 25%, rgba(0, 0, 0, 0.65) 100%),
+    url('https://webcdn.factorio.com/assets/img/web/bg_v4-85.jpg'),
     url('/factorio-bg.svg');
-  background-repeat: no-repeat, repeat;
-  background-size: cover, 256px 256px;
-  background-attachment: fixed, fixed;
+  background-size: cover, cover, 256px 256px;
+  background-position: center center, center center, 0 0;
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-attachment: fixed, fixed, fixed;
+  color: var(--fac-text-body);
+  font-family: 'Titillium Web', sans-serif;
 }
 
 #root {
@@ -63,45 +74,40 @@ body {
   background: transparent;
 }
 
+/* Headlines use the authentic Factorio caption cream + weight 900. */
+h1, h2, h3, h4, h5 {
+  color: var(--fac-text);
+  font-weight: 900;
+  line-height: 1.25;
+}
+
 .dashboard {
   max-width: 1560px;
   margin: 0 auto;
-  padding: 22px 30px 56px;
+  padding: 24px 32px 64px;
 }
 
-/* --- Top header bar (Factorio "title bar") --- */
+/* --- Top header bar (Factorio "title bar") ---
+   Padding follows the game's 12px content-padding convention (style.lua:
+   `inside_shallow_frame_with_padding` = 12px on all sides). */
 .dashboard-header {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 14px 20px 13px 24px;
-  margin-bottom: 20px;
-  background: linear-gradient(180deg, #2c2c2a 0%, #1f1f1d 100%);
-  border-top: 1px solid var(--fac-bevel-hi);
-  border-left: 1px solid var(--fac-bevel-hi);
-  border-right: 1px solid var(--fac-bevel-lo);
-  border-bottom: 1px solid var(--fac-bevel-lo);
-}
-
-/* Orange accent at the top — Factorio's "ready" indicator. */
-.dashboard-header::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -1px;
-  height: 2px;
-  background: var(--fac-accent);
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  background: var(--fac-panel);
+  border: 4px solid var(--fac-border);
+  box-shadow: 0px 0px 3px 0px var(--fac-bg-deep);
 }
 
 .dashboard-header h1 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
   color: var(--fac-text);
   display: flex;
   align-items: baseline;
@@ -110,83 +116,87 @@ body {
 
 .dashboard-header h1 .title-accent {
   color: var(--fac-accent);
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 900;
-  letter-spacing: 0;
   position: relative;
   top: -1px;
 }
 
 .dashboard-header h1 .title-run {
-  color: var(--fac-accent-hot);
+  color: var(--fac-accent-warm);
   font-weight: 600;
-  letter-spacing: 0.4px;
-  text-transform: none;
-  font-size: 17px;
+  font-size: 18px;
 }
 
 .dashboard-header .meta {
   display: block;
   margin-top: 4px;
-  color: var(--fac-text-dim);
-  font-size: 11px;
-  letter-spacing: 1.2px;
+  color: var(--fac-text-muted);
+  font-size: 12px;
+  letter-spacing: 0.6px;
   text-transform: uppercase;
   font-variant-numeric: tabular-nums;
 }
 
 .dashboard-header .meta .meta-label {
-  color: #6f6c66;
+  color: var(--fac-text-muted);
   margin-right: 6px;
 }
 
-/* --- Run picker (Factorio tab bar) --- */
+/* --- Run picker (game-style tab strip) ---
+   Default: medium-gray tab with a neutral inset bevel.
+   Hover:   orange `#e39827` with warm bevel + outer orange halo.
+   Active:  panel face with cream caption text — "merges into" the panel
+            it controls below, like an active tab in the game UI. */
 .run-picker {
   display: inline-flex;
   flex-shrink: 0;
-  background: var(--fac-bg);
-  border-top: 1px solid var(--fac-bevel-lo);
-  border-left: 1px solid var(--fac-bevel-lo);
-  border-right: 1px solid var(--fac-bevel-hi);
-  border-bottom: 1px solid var(--fac-bevel-hi);
-  padding: 2px;
-  gap: 2px;
+  gap: 4px;
 }
 
 .run-picker__tab {
   appearance: none;
-  background: var(--fac-panel-2);
-  border-top: 1px solid var(--fac-bevel-hi);
-  border-left: 1px solid var(--fac-bevel-hi);
-  border-right: 1px solid var(--fac-bevel-lo);
-  border-bottom: 1px solid var(--fac-bevel-lo);
-  padding: 5px 14px;
+  border: none;
+  padding: 9px 18px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  color: var(--fac-text);
+  letter-spacing: 0.2px;
   cursor: pointer;
-  transition: background 80ms linear, color 80ms linear;
+  border-radius: 4px 4px 0 0;
+  background-color: var(--fac-tab-bg);
+  color: var(--fac-tab-text);
+  box-shadow:
+    inset  0px  4px 1px -2px #c5c5c5,
+    inset  0px  4px 1px -2px #888888,
+    inset  0px -4px 1px -2px #2d2d2d,
+    inset  4px  0px 1px -2px #7a7a7a,
+    inset -4px  0px 1px -2px #1c1c1c;
+  transition: background-color 80ms linear, box-shadow 80ms linear;
 }
 
 .run-picker__tab:hover {
-  background: var(--fac-panel-3);
-  color: var(--fac-accent-hot);
+  background-color: var(--fac-accent);
+  color: var(--fac-tab-text);
+  box-shadow:
+    inset  0px  4px 1px -2px #d4c5ae,
+    inset  0px  4px 1px -2px #cf994b,
+    inset  0px -4px 1px -2px #4a300c,
+    inset  4px  0px 1px -2px #8b6325,
+    inset -4px  0px 1px -2px #4a300c,
+    0px 0px 8px var(--fac-accent);
+  position: relative;
+  z-index: 1;
 }
 
-.run-picker__tab--active {
-  background: var(--fac-accent);
-  color: #1a1611;
-  /* Factorio "pressed-in" inversion — light bevel goes to bottom-right. */
-  border-top: 1px solid var(--fac-bevel-lo);
-  border-left: 1px solid var(--fac-bevel-lo);
-  border-right: 1px solid #ffc06a;
-  border-bottom: 1px solid #ffc06a;
-}
-
+.run-picker__tab--active,
 .run-picker__tab--active:hover {
-  background: var(--fac-accent);
-  color: #1a1611;
+  background-color: var(--fac-panel);
+  color: var(--fac-text);
+  box-shadow:
+    inset  0px  4px 1px -2px #686868,
+    inset  4px  0px 1px -2px #1c1c1c,
+    inset -4px  0px 1px -2px #1a1a1a,
+    0px 6px 4px var(--fac-panel),
+    0px 0px 4px #101010;
 }

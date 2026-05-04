@@ -1,23 +1,19 @@
 /* When the phase analyzer is nested inside the run-overview card we drop
-   the inner widget's own card chrome and use a thicker colored top
-   border (in the active phase's color) so the whole thing reads as one
-   panel and the link from the strip's active band to the panel below
-   is visually obvious. */
+   the inner widget's own card chrome and use a thicker top divider so the
+   strip's active band visually "connects" into the analyzer panel below. */
 .phase-analyzer {
-  border-top: 4px solid var(--fac-bevel-lo);
+  border-top: 4px solid var(--fac-border);
   background: var(--fac-panel);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .phase-analyzer .end-game {
   background: transparent;
   border: none;
-  border-radius: 0;
-  margin-top: 0;
   box-shadow: none;
+  margin-top: 0;
 }
 
 .phase-analyzer .end-game__header {
-  background: linear-gradient(180deg, #353532 0%, #262624 100%);
-  padding-left: 28px;
+  background: var(--fac-panel);
+  border-bottom: 2px solid var(--fac-border);
 }

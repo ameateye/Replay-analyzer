@@ -97,7 +97,7 @@ export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable
       </header>
       <div className="run-overview__chart" ref={containerRef}>
         <svg viewBox={`0 0 ${W} ${totalH}`} preserveAspectRatio="xMidYMid meet">
-          <rect width={W} height={totalH} fill={COLORS.bg} />
+          <rect width={W} height={totalH} fill={COLORS.surface} />
 
           <Group left={MARGIN_LEFT} top={ribbonTop}>
             <ResearchRibbon

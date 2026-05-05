@@ -158,5 +158,26 @@
       { "key": "prod-module-buffer","group": "purple", "recipe": "productivity-module",     "label": "Productivity modules (chest only)", "color": "#dd2e6f", "mode": "buffer", "excludeInventory": true },
       { "key": "back-steel-rate",   "group": "purple", "recipe": "steel-plate",             "label": "Steel (back side)",            "color": "#94a3b8", "mode": "rate", "machineFilter": "after-full-build-start" }
     ]
+  },
+  "burnerPhaseDisplay": {
+    "groups": [
+      { "id": "burners", "label": "Burner miners" }
+    ],
+    "rows": [
+      { "key": "burner-iron",   "group": "burners", "recipe": "iron-ore",   "label": "Iron burners",   "color": "#7ea5c4", "mode": "count" },
+      { "key": "burner-copper", "group": "burners", "recipe": "copper-ore", "label": "Copper burners", "color": "#d97a3c", "mode": "count" },
+      { "key": "burner-coal",   "group": "burners", "recipe": "coal",       "label": "Coal burners",   "color": "#9d9d9d", "mode": "count" },
+      { "key": "burner-stone",  "group": "burners", "recipe": "stone",      "label": "Stone burners",  "color": "#d4af6a", "mode": "count" }
+    ]
+  },
+  "manualGatheringDisplay": {
+    "groups": [
+      { "id": "gathering", "label": "Manual gathering" }
+    ],
+    "rows": [
+      { "key": "gathered-wood",  "group": "gathering", "recipe": "wood",  "label": "Wood chopped",  "color": "#7ea869", "mode": "cum" },
+      { "key": "gathered-stone", "group": "gathering", "recipe": "stone", "label": "Stone mined",   "color": "#d4af6a", "mode": "cum" },
+      { "key": "gathered-coal",  "group": "gathering", "recipe": "coal",  "label": "Coal mined",    "color": "#9d9d9d", "mode": "cum" }
+    ]
   }
 }

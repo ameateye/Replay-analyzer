@@ -11,7 +11,8 @@ export function PhaseAnalyzer({ run, phaseName }: { run: Run; phaseName: string 
   const gameData = useGameData();
   if (!phaseName) return null;
   const entry = PHASE_WIDGETS[phaseName];
-  if (!entry || run[entry.dataKey] == null) return null;
+  if (!entry) return null;
+  if (run[entry.dataKey] == null && !entry.optionalData) return null;
   const Widget = entry.Widget;
   const color = phaseColor(gameData, phaseName);
   return (

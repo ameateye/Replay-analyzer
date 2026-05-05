@@ -48,6 +48,8 @@ export type GameData = {
     mixedSegmentDisplay: EndGameRecipeDisplay[];
     oilPhaseDisplay: PhaseDisplay;
     fullBuildDisplay: PhaseDisplay;
+    burnerPhaseDisplay: PhaseDisplay;
+    manualGatheringDisplay: PhaseDisplay;
   };
   buildPhases: {
     baseMachineTypes: string[];

@@ -20,6 +20,8 @@ import { buildEndGameProduction } from './end-game-production-prep.mjs';
 import { buildMixedSegment } from './end-game/mixed-segment.mjs';
 import { buildOilPhase } from './oil-phase-prep.mjs';
 import { buildFullBuildPhase } from './full-build-prep.mjs';
+import { buildBurnerPhase } from './burner-phase-prep.mjs';
+import { buildManualGathering } from './manual-gathering-prep.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_ROOT = path.resolve(__dirname, '..');
@@ -76,6 +78,11 @@ const endGame = buildEndGameProduction(runDir, rocketLaunchTick);
 const mixedSegment = buildMixedSegment(runDir, phases, rocketLaunchTick);
 const oilPhase = buildOilPhase(runDir, rocketLaunchTick, phases);
 const fullBuildPhase = buildFullBuildPhase(runDir, rocketLaunchTick, phases);
+const burnerPhase = buildBurnerPhase(runDir, rocketLaunchTick, phases);
+const burnerEndTick = phases.find(p => p.name === 'Burner')?.endTick ?? null;
+const manualGathering = burnerPhase
+  ? buildManualGathering(runDir, burnerPhase.xMaxTick, burnerEndTick)
+  : null;
 
 const output = {
   runName,
@@ -91,6 +98,8 @@ const output = {
   mixedSegment,
   oilPhase,
   fullBuildPhase,
+  burnerPhase,
+  manualGathering,
   endGame,
 };
 
@@ -132,5 +141,13 @@ if (oilPhase) {
 }
 if (fullBuildPhase) {
   console.log(`  full-build rows: ${fullBuildPhase.rows.map(r => `${r.key} (${r.mode})`).join(', ')}`);
+}
+if (burnerPhase) {
+  console.log(`  burner xMax=${burnerPhase.xMaxMin.toFixed(1)} min · rows: ${burnerPhase.rows.map(r => `${r.key} peak=${r.peakBufferWithInv} run=${r.runningMin}m`).join(', ')}`);
+} else {
+  console.log('  burner: minerActivity.json missing — phase widget skipped');
+}
+if (manualGathering) {
+  console.log(`  manual gathering: ${manualGathering.rows.map(r => `${r.recipe}=${r.finalCum}`).join(', ')}`);
 }
 console.log(`Wrote ${outPath} (${sizeKB} KB)`);

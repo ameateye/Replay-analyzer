@@ -21,9 +21,11 @@ import { containerXY, TooltipRow, type TooltipState } from './Tooltip';
 
 // 'fluid-buffer' is buffer-mode for fluid tanks: same line rendering as
 // 'buffer' but different headline + tooltip wording (tanks, not chests + inv).
-// Data prep stores the per-tick fluid sum in `bufferWithInv` so the line path
-// is identical.
-export type ProductionMode = 'rate' | 'cum' | 'buffer' | 'fluid-buffer';
+// 'count' is buffer-mode for entity counts (e.g. active burner-miners by
+// resource): same line rendering as 'buffer' but no chest/inv wording — the
+// row label carries the meaning. Data prep stores the per-tick scalar in
+// `bufferWithInv` for both, so the line path is identical.
+export type ProductionMode = 'rate' | 'cum' | 'buffer' | 'fluid-buffer' | 'count';
 
 type StatusKey = 'no_ingredients' | 'no_fuel' | 'full_output' | 'low_power' | 'unknown';
 
@@ -94,6 +96,10 @@ type Props = {
   // row aggregates multiple sources and the rate stack needs distinct colors
   // per source.
   componentMeta?: ComponentMeta[];
+  // Replace the right-margin headline string entirely. Used when the
+  // standard "peak X" / "total Y" wording doesn't fit the row's story —
+  // e.g. burner rows that want "X burners running for Y minutes".
+  headlineOverride?: string;
 };
 
 const bisectMinute = bisector<number, number>(m => m).left;
@@ -127,6 +133,7 @@ export function ProductionRow({
   setTooltip,
   metaOverride,
   componentMeta,
+  headlineOverride,
 }: Props) {
   const gameData = useGameData();
   const lookupMeta = recipeMeta(gameData, recipe.recipe);
@@ -146,8 +153,9 @@ export function ProductionRow({
   );
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  const isBufferMode = mode === 'buffer' || mode === 'fluid-buffer';
-  const showLimit = isBufferMode && recipe.showBufferLimit && recipe.bufferLimit != null;
+  const isLineMode = mode === 'buffer' || mode === 'fluid-buffer' || mode === 'count';
+  const showLimit = isLineMode && mode !== 'count'
+    && recipe.showBufferLimit && recipe.bufferLimit != null;
   const peak = mode === 'rate'
     ? Math.max(recipe.peakPotential, recipe.peakActual)
     : mode === 'cum'
@@ -200,13 +208,17 @@ export function ProductionRow({
       : yScale(recipe.bufferWithInv[hoverIdx]);
   const hoverColor = mode === 'rate' ? ACTUAL_LINE : meta.color;
 
-  const headline = mode === 'rate'
+  const headline = headlineOverride ?? (
+    mode === 'rate'
     ? `peak ${formatRate(recipe.peakActual)} / ${formatRate(recipe.peakPotential)} /min · total ${recipe.finalCum.toLocaleString('en-US')}`
     : mode === 'cum'
     ? `total ${recipe.finalCum.toLocaleString('en-US')}`
     : mode === 'fluid-buffer'
     ? `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')} · ${recipe.chestCount} tank${recipe.chestCount === 1 ? '' : 's'}`
-    : `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')} · ${recipe.chestCount} chest${recipe.chestCount === 1 ? '' : 's'} + inv`;
+    : mode === 'count'
+    ? `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')}`
+    : `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')} · ${recipe.chestCount} chest${recipe.chestCount === 1 ? '' : 's'} + inv`
+  );
 
   return (
     <>
@@ -360,6 +372,15 @@ function buildProductionTooltip(
         <div className="chart-tooltip__tabs">
           <Tab
             label="buffer"
+            color={meta.color}
+            value={buf.toLocaleString('en-US')}
+            active
+          />
+        </div>
+      ) : mode === 'count' ? (
+        <div className="chart-tooltip__tabs">
+          <Tab
+            label="active"
             color={meta.color}
             value={buf.toLocaleString('en-US')}
             active

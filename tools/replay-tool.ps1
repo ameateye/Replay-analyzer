@@ -68,6 +68,40 @@ function Get-Config {
     return $cfg
 }
 
+function Ensure-NodeOnPath {
+    <#
+        npm is invoked via the .cmd shim or directly from PowerShell, neither of
+        which inherits fnm's shell-managed PATH. If npm isn't already discoverable,
+        either honour an explicit config override or pick the highest-versioned
+        installation under fnm's node-versions directory.
+    #>
+    param([object]$Config)
+
+    if (Get-Command npm -ErrorAction SilentlyContinue) { return }
+
+    $candidate = $null
+    if ($Config -and $Config.PSObject.Properties.Name.Contains('nodePath') -and -not [string]::IsNullOrWhiteSpace($Config.nodePath)) {
+        $candidate = $Config.nodePath
+    } else {
+        $fnmRoot = Join-Path $env:APPDATA 'fnm\node-versions'
+        if (Test-Path -LiteralPath $fnmRoot) {
+            $latest = Get-ChildItem -Path $fnmRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^v\d+\.\d+\.\d+$' } |
+                Sort-Object @{Expression = { [version]($_.Name.Substring(1)) }} -Descending |
+                Select-Object -First 1
+            if ($latest) {
+                $candidate = Join-Path $latest.FullName 'installation'
+            }
+        }
+    }
+
+    if (-not $candidate -or -not (Test-Path -LiteralPath $candidate)) {
+        throw "npm not found on PATH and no Node installation could be located. Install Node, or set 'nodePath' in config.json."
+    }
+
+    $env:Path = "$candidate;" + $env:Path
+}
+
 function Resolve-SaveInput {
     param([string]$InputArg, [string]$ExternalSavesFolder)
 
@@ -216,6 +250,7 @@ function Invoke-Install {
 
 function Invoke-Build {
     param([object]$Config)
+    Ensure-NodeOnPath -Config $Config
     Push-Location $Config.repoPath
     try {
         Write-Host "Running: npm run build"
@@ -285,6 +320,7 @@ function Invoke-BuildDashboardData {
         throw "Dashboard path not found: $($Config.dashboardPath)"
     }
 
+    Ensure-NodeOnPath -Config $Config
     Push-Location $Config.dashboardPath
     try {
         Write-Host "Running: npm run data -- `"$runFolder`""

@@ -22,8 +22,19 @@ dashboard-mock.html
 # Claude Code workspace settings (machine-specific paths)
 .claude/
 
-# Upstream mod-extraction repo — clone separately, see README
+# Data collection layer — clone separately, see README
 factorio-replay-data-collection/
+factorio-replay-analysis/
+
+# FBSR build chain — clone separately, see tools/README (in progress)
+Factorio-FBSR/
+Java-Factorio-Data-Wrapper/
+
+# Portable JDK + Maven for FBSR build
+tools/jdk21/
+tools/maven/
+tools/dl/
+tools/output/
 
 # Logs
 *.log

@@ -26,10 +26,6 @@ dashboard-mock.html
 factorio-replay-data-collection/
 factorio-replay-analysis/
 
-# FBSR build chain — clone separately, see tools/README (in progress)
-Factorio-FBSR/
-Java-Factorio-Data-Wrapper/
-
 # Portable JDK + Maven for FBSR build
 tools/jdk21/
 tools/maven/

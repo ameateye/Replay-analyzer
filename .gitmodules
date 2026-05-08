@@ -1,0 +1,8 @@
+[submodule "Factorio-FBSR"]
+	path = Factorio-FBSR
+	url = https://github.com/ameateye/Factorio-FBSR
+	branch = replay-analyzer
+[submodule "Java-Factorio-Data-Wrapper"]
+	path = Java-Factorio-Data-Wrapper
+	url = https://github.com/ameateye/Java-Factorio-Data-Wrapper
+	branch = replay-analyzer

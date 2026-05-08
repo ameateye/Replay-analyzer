@@ -35,12 +35,17 @@ function gameDataServer(): Plugin {
     closeBundle() {
       if (!fs.existsSync(GAME_DATA_DIR)) return;
       const dest = path.resolve(__dirname, 'dist', 'game-data');
-      fs.mkdirSync(dest, { recursive: true });
-      for (const f of fs.readdirSync(GAME_DATA_DIR)) {
-        if (f.endsWith('.json')) {
-          fs.copyFileSync(path.join(GAME_DATA_DIR, f), path.join(dest, f));
+      // Recurse: subdirs (e.g. map-sprites/<run>.json) need to come along
+      // so the build subpath matches the dev middleware.
+      const walk = (src: string, dst: string) => {
+        fs.mkdirSync(dst, { recursive: true });
+        for (const f of fs.readdirSync(src, { withFileTypes: true })) {
+          const sp = path.join(src, f.name), dp = path.join(dst, f.name);
+          if (f.isDirectory()) walk(sp, dp);
+          else if (f.isFile() && f.name.endsWith('.json')) fs.copyFileSync(sp, dp);
         }
-      }
+      };
+      walk(GAME_DATA_DIR, dest);
     },
   };
 }
@@ -48,4 +53,12 @@ function gameDataServer(): Plugin {
 export default defineConfig({
   plugins: [react(), gameDataServer()],
   base: './',
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        map:  path.resolve(__dirname, 'map.html'),
+      },
+    },
+  },
 });

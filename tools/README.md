@@ -62,11 +62,17 @@ mvn -version
 
 ### Vanilla profile bootstrap
 
-> **TODO:** document how the FBSR `profiles/vanilla/` directory is initialised on a new machine.
->
-> The trimmed fork ships only `profile.json` (4 KB). FBSR also needs the Factorio data dump and sprite atlases at this path before `ReplaySvgRender` can run — `Profile.vanilla().isReady()` is the gate.
->
-> Upstream FBSR's CLI commands that build these (`profile-default-vanilla`, `build`, `build-download`, `build-dump`, `build-assets`, `build-manifest`) were dropped from the fork along with the rest of the blueprint-rendering shell. So on a fresh machine, the bootstrap currently requires a separate clone of upstream `demodude4u/Factorio-FBSR` (or a copy of the populated `profiles/vanilla/` from an existing setup).
+`ReplaySvgRender` won't run until `profiles/vanilla/` contains the Factorio data dump and the sprite atlases — `profile.json` alone (4 KB, committed) isn't enough. `Profile.vanilla().isReady()` is the gate.
+
+Generated via FBSR's interactive shell. From `Factorio-FBSR/FactorioBlueprintStringRenderer/`:
+
+```powershell
+mvn exec:java                # opens the interactive shell
+> profile-default-vanilla    # writes profiles/vanilla/profile.json
+> build                      # build-download → build-dump → build-assets → build-manifest
+```
+
+Re-run after a Factorio update with `build -all -force-dump`. Mod updates: `build <profile> -force`. The shell prints these hints on startup.
 
 ## Build
 

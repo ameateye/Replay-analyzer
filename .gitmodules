@@ -6,3 +6,7 @@
 	path = Java-Factorio-Data-Wrapper
 	url = https://github.com/ameateye/Java-Factorio-Data-Wrapper
 	branch = replay-analyzer
+[submodule "factorio-replay-analysis"]
+	path = factorio-replay-analysis
+	url = https://github.com/ameateye/factorio-replay-analysis.git
+	branch = main

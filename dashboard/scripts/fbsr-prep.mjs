@@ -65,18 +65,33 @@ function main() {
   const merged = [];
 
   // 1) Belts / inserters from entityLayout (poles excluded by user-defined scope).
+  //
+  // The data layer stores the BUILD-TIME `direction` on the entity and
+  // appends every later rotation to `mutations[*].direction`. Reading
+  // `e.direction` alone gives the orientation the entity had when first
+  // placed, not the one in effect at the end of the run. For a static
+  // end-of-game render we want the latest folded value — otherwise rows
+  // that were rotated mid-build (e.g. row-3 of the top-left copper bank
+  // in DS-2_14_45, which was rotated N→S at tick 113103) end up drawn
+  // facing the wrong way and the inserter sprites disagree with the
+  // flow-arrows overlay.
   const layout = readJson('entityLayout.json');
   for (const e of layout.entities) {
     if (!LAYOUT_SCOPE.has(e.name)) continue;
+    let direction = e.direction || 0;
+    let beltToGround = e.beltToGroundType;
+    for (const m of e.mutations ?? []) {
+      if (m.direction        !== undefined) direction    = m.direction;
+      if (m.beltToGroundType !== undefined) beltToGround = m.beltToGroundType;
+    }
     const rec = {
       name: e.name,
       position: { x: e.location.x, y: e.location.y },
-      direction: e.direction || 0,
+      direction,
       timeBuilt: e.timeBuilt ?? 0,
       unitNumber: e.unitNumber,
     };
-    // entityLayout doesn't track underground-belt I/O type; default to input.
-    if (e.name.endsWith('underground-belt')) rec.type = 'input';
+    if (e.name.endsWith('underground-belt')) rec.type = beltToGround ?? 'input';
     merged.push(rec);
   }
 

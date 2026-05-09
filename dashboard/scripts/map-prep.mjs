@@ -1,7 +1,7 @@
 // Joins the FBSR atlas manifest with the timing sidecar produced by
 // fbsr-prep, and writes the two files the React player needs at runtime:
-// a small map-data JSON (entities + viewBox + timeline) and a run-local
-// sprite atlas served from game-data.
+// a small map-data JSON (entities + viewBox + timeline) and a single
+// cross-run sprite atlas served from game-data.
 //
 // Inputs (under tools/output/):
 //   <RUN>.manifest.json   — { viewBox, sprites: {id→{w,h,data}},
@@ -9,21 +9,31 @@
 //                           Granular layering: one entry per (entity, FBSR Layer)
 //                           bucket; L is the FBSR Layer ordinal (see
 //                           Factorio-FBSR Layer.java) carrying global draw order.
+//                           Transient: this script DELETES the manifest after
+//                           a successful write — its data is fully captured in
+//                           the per-run map.json (placements) and the shared
+//                           atlas (sprites). Re-running map-prep means
+//                           re-rendering with FBSR.
 //   <RUN>.timing.json     — { [entityNumber]: { tb, tr?, un, rs? } }   (rs = recipe timeline)
 //
 // Outputs:
 //   dashboard/public/map-data/<RUN>.map.json
 //       — { viewBox, durationTick, entities (renderables, sorted globally by
 //           (L, py, px)), recipeMachines (one per entity-with-rs), playerTrack }
-//   game-data/map-sprites/<RUN>.json
+//   game-data/map-sprites.json
 //       — { id → {w, h, data} }   (entity sprites + recipe-icon sprites with sid prefix "r:")
+//         Shared across all runs: sprite IDs are deterministic (entity name
+//         / `r:<recipe>`), so this script MERGES new sprites into the
+//         existing atlas rather than overwriting. Existing IDs keep their
+//         data; new IDs are added.
 //
 // Splitting sprites out of the per-run map.json keeps that file small
 // (entities + timing only) and lets the React side fetch sprites via the
 // shared game-data URL contract — same caching/path semantics as the rest
-// of the cross-run reference data.
+// of the cross-run reference data. The atlas is shared because every run
+// re-renders the same set of entity / recipe sprites.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,8 +52,7 @@ const rocketPath   = resolve(ROOT, 'extracted-data', RUN, 'rocketLaunchTime.json
 const playerPath   = resolve(ROOT, 'extracted-data', RUN, 'playerPosition.json');
 const outDir       = resolve(ROOT, 'dashboard', 'public', 'map-data');
 const outPath      = resolve(outDir, `${RUN}.map.json`);
-const spriteDir    = resolve(ROOT, 'game-data', 'map-sprites');
-const spritePath   = resolve(spriteDir, `${RUN}.json`);
+const spritePath   = resolve(ROOT, 'game-data', 'map-sprites.json');
 
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
 const timing   = JSON.parse(readFileSync(timingPath,   'utf-8'));
@@ -54,6 +63,95 @@ try {
   durationTick = r.rocketLaunchTimes?.[0] ?? 0;
 } catch {
   // First-rocket-launch tick is optional; player just falls back to last build tick.
+}
+
+// Rebind each entity's sprite to its END-OF-RUN orientation.
+//
+// FBSR's manifest bakes one sid per renderable based on the direction it saw
+// in the input blueprint at render time. When the input was rendered before
+// the fbsr-prep mutation-folding fix, rotated entities got their build-time
+// direction's sprite. The atlas itself already contains all four orientation
+// sprites — only the per-entity sid pointer is wrong.
+//
+// Strategy: derive a `(name, direction[, beltToGroundType], L) → {sid, ox, oy}`
+// lookup from the manifest itself, keyed on each entity's RAW (build-time)
+// direction (which is what FBSR saw). Then walk the manifest again with each
+// entity's CUTOFF direction (mutations folded through rocket launch) and swap
+// the sid/offsets when it differs.
+//
+// Skip if rocketLaunchTime.json is missing — without a cutoff we can't fold.
+const layoutPath = resolve(ROOT, 'extracted-data', RUN, 'entityLayout.json');
+const minerPath  = resolve(ROOT, 'extracted-data', RUN, 'minerActivity.json');
+
+function foldDirection(e, cutoff) {
+  let dir = e.direction ?? 0;
+  let bgt = e.beltToGroundType;
+  for (const m of e.mutations ?? []) {
+    if (m.tick > cutoff) break;
+    if (m.direction !== undefined) dir = m.direction;
+    if (m.beltToGroundType !== undefined) bgt = m.beltToGroundType;
+  }
+  return { dir, bgt };
+}
+
+if (durationTick > 0) {
+  const rawByUn = new Map();   // unitNumber → build-time { dir, bgt }
+  const cutByUn = new Map();   // unitNumber → cutoff      { dir, bgt }
+
+  try {
+    const layout = JSON.parse(readFileSync(layoutPath, 'utf-8'));
+    for (const e of layout.entities) {
+      rawByUn.set(e.unitNumber, { dir: e.direction ?? 0, bgt: e.beltToGroundType });
+      cutByUn.set(e.unitNumber, foldDirection(e, durationTick));
+    }
+  } catch {
+    // entityLayout missing — leave the manifest as-is.
+  }
+  try {
+    const miners = JSON.parse(readFileSync(minerPath, 'utf-8'));
+    for (const e of miners.miners ?? []) {
+      rawByUn.set(e.unitNumber, { dir: e.direction ?? 0 });
+      cutByUn.set(e.unitNumber, foldDirection(e, durationTick));
+    }
+  } catch {
+    // minerActivity missing — drills/pumpjack stay on their manifest sids.
+  }
+
+  // entity_number → unitNumber via the timing sidecar.
+  const enToUn = new Map();
+  for (const [en, t] of Object.entries(timing)) enToUn.set(+en, t.un);
+
+  // Lookup table built from the manifest's CURRENT sids, keyed on RAW direction.
+  const lookup = new Map();
+  for (const e of manifest.entities) {
+    const un = enToUn.get(e.en);
+    const raw = rawByUn.get(un);
+    if (!raw || raw.dir === undefined) continue;
+    const key = `${e.name}|${raw.dir}|${raw.bgt ?? '_'}|${e.L}`;
+    if (!lookup.has(key)) {
+      lookup.set(key, { sid: e.sid, oxOff: e.ox - e.px, oyOff: e.oy - e.py });
+    }
+  }
+
+  // Patch entities whose cutoff direction or beltToGroundType differs from build.
+  let patched = 0, missingTarget = 0;
+  for (const e of manifest.entities) {
+    const un = enToUn.get(e.en);
+    const cur = cutByUn.get(un);
+    const raw = rawByUn.get(un);
+    if (!cur || !raw) continue;
+    const sameDir = (cur.dir ?? 0) === (raw.dir ?? 0);
+    const sameBgt = (cur.bgt ?? '_') === (raw.bgt ?? '_');
+    if (sameDir && sameBgt) continue;
+    const key = `${e.name}|${cur.dir ?? 0}|${cur.bgt ?? '_'}|${e.L}`;
+    const target = lookup.get(key);
+    if (!target) { missingTarget++; continue; }
+    e.sid = target.sid;
+    e.ox = e.px + target.oxOff;
+    e.oy = e.py + target.oyOff;
+    patched++;
+  }
+  console.log('sprite-rebinds (rotation/flip):', patched, missingTarget ? `(no atlas variant for ${missingTarget})` : '');
 }
 
 // Join sprite manifest with timing sidecar (tb / tr / rs per entityNumber).
@@ -135,19 +233,33 @@ const out = {
   playerTrack,
 };
 
+// Merge into the shared atlas. Sprite IDs are deterministic (entity name
+// or `r:<recipe>`), so re-running for an existing run is idempotent and
+// adding a new run augments the atlas with whatever IDs it introduced.
+const existingSprites = existsSync(spritePath)
+  ? JSON.parse(readFileSync(spritePath, 'utf-8'))
+  : {};
+const beforeCount = Object.keys(existingSprites).length;
+const mergedSprites = { ...existingSprites, ...manifest.sprites };
+const addedCount = Object.keys(mergedSprites).length - beforeCount;
+
 mkdirSync(outDir, { recursive: true });
-mkdirSync(spriteDir, { recursive: true });
 writeFileSync(outPath, JSON.stringify(out));
-writeFileSync(spritePath, JSON.stringify(manifest.sprites));
+writeFileSync(spritePath, JSON.stringify(mergedSprites));
+
+// Manifest is now redundant: sprites are in the shared atlas, placements
+// are in the per-run map.json. Drop it so the only persistent FBSR-side
+// state is `<RUN>.json` (blueprint) + `<RUN>.timing.json` (cheap, sub-MB).
+unlinkSync(manifestPath);
 
 const entitySpriteCount = Object.keys(manifest.sprites).filter(k => !k.startsWith('r:')).length;
 const recipeSpriteCount = Object.keys(manifest.sprites).length - entitySpriteCount;
 const layerCount = new Set(entities.map(e => e.L)).size;
 
 console.log('wrote', outPath);
-console.log('wrote', spritePath);
+console.log('wrote', spritePath, `(atlas: ${Object.keys(mergedSprites).length} sprites, +${addedCount} new from this run)`);
 console.log('renderables:', entities.length, '/ across', layerCount, 'FBSR layers');
-console.log('entity sprites:', entitySpriteCount, '/ recipe sprites:', recipeSpriteCount);
+console.log('entity sprites in run:', entitySpriteCount, '/ recipe sprites in run:', recipeSpriteCount);
 console.log('with timeRemoved:', entities.filter(e => e.tr !== undefined).length);
 console.log('recipe machines:', recipeMachines.length);
 if (droppedRecipeEntries) console.log('dropped recipe-events (sprite missing):', droppedRecipeEntries);

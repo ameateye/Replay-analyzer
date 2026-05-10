@@ -10,12 +10,23 @@
                                 external-saves folder (config: externalSavesFolder),
                                 or a glob pattern matched against that folder.
       build                     Run `npm run build` in the repo to regenerate out/control.lua.
+      playback <save>           Run an installed save through Factorio --run-replay headlessly
+                                (no GUI, no audio, uncapped tick rate). control.lua's auto-export
+                                on rocket launch fires the same way it does in the GUI, so
+                                JSONs land in script-output/ and Factorio exits cleanly.
+                                Requires Factorio >= 2.0.51 (Steam install is auto-detected;
+                                override with 'factorioBinary' in config.json).
       extract <name> [save]     Move all *.json files from Factorio's script-output folder
                                 into extracted-data/<name>/. If [save] is given, also delete
                                 that save from the Factorio saves folder afterwards.
       process <name> [save]     Full post-replay pipeline: extract JSONs, optionally clean
                                 the save, then rebuild dashboard data via `npm run data`
                                 so the new run shows up in the React app.
+      run <external-save> <name>
+                                One-shot end-to-end pipeline: install -> headless playback ->
+                                extract -> clean save -> rebuild dashboard. Replaces the
+                                manual GUI play step entirely. Same Factorio version requirement
+                                as `playback`.
       clean <save>              Delete a save from the Factorio saves folder. <save> can be
                                 a filename (with or without .zip) or a glob. The original
                                 save in externalSavesFolder is never touched.
@@ -25,25 +36,30 @@
 
     Configuration is read from ../config.json (relative to this script).
 
-    Typical workflow:
+    Typical workflow (manual GUI play):
       replay-tool install  "DSMP 01_47_59.zip"
       <play in Factorio, save, run /export-replay-data>
       replay-tool process  DSMP-run-1 "DSMP 01_47_59.zip"     # extract + clean + rebuild dashboard
+
+    Typical workflow (headless, one-shot):
+      replay-tool run      "Actual DS 2_16_04.zip" DS-2_16_04  # install + headless play + process
 
 .EXAMPLE
     ./replay-tool.ps1 install "DSMP 01_47_59.zip"
     ./replay-tool.ps1 list-saves "DSMP*"
     ./replay-tool.ps1 build
+    ./replay-tool.ps1 playback "Actual DS 2_16_04.zip"
     ./replay-tool.ps1 extract DSMP-run-1
     ./replay-tool.ps1 extract DSMP-run-1 "DSMP 01_47_59.zip"
     ./replay-tool.ps1 process DSMP-run-1 "DSMP 01_47_59.zip"
+    ./replay-tool.ps1 run "Actual DS 2_16_04.zip" DS-2_16_04
     ./replay-tool.ps1 clean "DSMP 01_47_59.zip"
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('install', 'build', 'extract', 'process', 'clean', 'list-saves', 'list-installed', 'config', 'help')]
+    [ValidateSet('install', 'build', 'playback', 'extract', 'process', 'run', 'clean', 'list-saves', 'list-installed', 'config', 'help')]
     [string]$Command = 'help',
 
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
@@ -340,6 +356,180 @@ function Invoke-Process {
     Invoke-BuildDashboardData -Name $Name -Config $Config
 }
 
+function Resolve-FactorioBinary {
+    <#
+        Locate factorio.exe. Priority: explicit config override -> Steam install ->
+        standalone install. The standalone install is often pinned to an older
+        version (e.g. 1.1.x), so version is verified by Assert-FactorioVersionSupportsRunReplay
+        before --run-replay is used.
+    #>
+    param([object]$Config)
+
+    if ($Config.PSObject.Properties.Name.Contains('factorioBinary') -and -not [string]::IsNullOrWhiteSpace($Config.factorioBinary)) {
+        if (Test-Path -LiteralPath $Config.factorioBinary -PathType Leaf) {
+            return $Config.factorioBinary
+        }
+        throw "factorioBinary in config.json is set but the path doesn't exist: $($Config.factorioBinary)"
+    }
+
+    $candidates = @(
+        (Join-Path ${env:ProgramFiles(x86)} 'Steam\steamapps\common\Factorio\bin\x64\factorio.exe'),
+        (Join-Path $env:ProgramFiles            'Factorio\bin\x64\factorio.exe')
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { return $c }
+    }
+    throw "Factorio binary not found. Set 'factorioBinary' in config.json (must be Factorio >= 2.0.51 for --run-replay)."
+}
+
+function Assert-FactorioVersionSupportsRunReplay {
+    param([string]$Binary)
+
+    $first = & $Binary --version 2>&1 | Select-Object -First 1
+    if ($first -match 'Version:\s*(\d+)\.(\d+)\.(\d+)') {
+        $major = [int]$Matches[1]; $minor = [int]$Matches[2]; $patch = [int]$Matches[3]
+        $isSupported = ($major -gt 2) -or ($major -eq 2 -and $minor -gt 0) -or ($major -eq 2 -and $minor -eq 0 -and $patch -ge 51)
+        if (-not $isSupported) {
+            throw "Factorio at $Binary is $major.$minor.$patch; --run-replay requires >= 2.0.51. Set 'factorioBinary' in config.json to point at a newer install."
+        }
+        return "$major.$minor.$patch"
+    }
+    Write-Host "Warning: could not parse Factorio version from '$first'; proceeding anyway." -ForegroundColor Yellow
+    return $null
+}
+
+function Assert-FactorioNotRunning {
+    $procs = @(Get-Process -Name 'factorio' -ErrorAction SilentlyContinue)
+    if ($procs.Count -gt 0) {
+        $pids = ($procs | ForEach-Object { $_.Id }) -join ', '
+        throw "Factorio is already running (PID $pids). The single-instance lock prevents --run-replay from launching alongside it. Close Factorio and retry."
+    }
+}
+
+function Invoke-Playback {
+    <#
+        Run an installed save headlessly via factorio.exe --run-replay. Streams stdout/stderr
+        to a timestamped log file in $env:TEMP (the script-init enum dump alone is ~18k lines,
+        too noisy to print to the console) and reports elapsed wall-clock every 30s.
+        control.lua exits the game cleanly after auto-export on rocket launch.
+    #>
+    param(
+        [string]$SaveArg,
+        [object]$Config,
+        [string]$Binary
+    )
+
+    Assert-FactorioNotRunning
+    if (-not $Binary) { $Binary = Resolve-FactorioBinary -Config $Config }
+    $version = Assert-FactorioVersionSupportsRunReplay -Binary $Binary
+
+    $savePath = Resolve-FactorioSave -InputArg $SaveArg -SavesFolder $Config.factorioSavesFolder
+
+    # Clear stale flat JSONs so the auto-export of THIS run is what we extract later.
+    $stale = @(Get-ChildItem -Path $Config.factorioScriptOutput -Filter '*.json' -File -ErrorAction SilentlyContinue)
+    if ($stale.Count -gt 0) {
+        Write-Host "Removing $($stale.Count) stale *.json file(s) from script-output/" -ForegroundColor Yellow
+        $stale | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+    }
+
+    $logDir = Join-Path $env:TEMP 'factorio-replay-headless'
+    if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+    $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $stdout = Join-Path $logDir "$stamp.stdout.log"
+    $stderr = Join-Path $logDir "$stamp.stderr.log"
+
+    Write-Host "Binary:  $Binary$(if ($version) { " ($version)" })"
+    Write-Host "Save:    $savePath"
+    Write-Host "Log:     $stdout"
+    Write-Host "Running headless replay (no GUI, audio disabled, uncapped tick rate)..." -ForegroundColor Cyan
+
+    # Start-Process joins -ArgumentList array entries with spaces but does NOT quote
+    # entries that contain spaces (verified failure on Windows PowerShell 5.1 — Factorio
+    # received the save path truncated at the first space). Build a single quoted
+    # CommandLine string instead so the child gets the path intact.
+    $argString = '--run-replay "{0}" --disable-audio' -f $savePath
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $proc = Start-Process -FilePath $Binary `
+                          -ArgumentList $argString `
+                          -NoNewWindow -PassThru `
+                          -RedirectStandardOutput $stdout `
+                          -RedirectStandardError  $stderr
+
+    $lastReport = 0
+    while (-not $proc.HasExited) {
+        Start-Sleep -Seconds 5
+        $elapsed = [int]$sw.Elapsed.TotalSeconds
+        if (($elapsed - $lastReport) -ge 30) {
+            Write-Host "  $elapsed s elapsed (PID $($proc.Id))..."
+            $lastReport = $elapsed
+        }
+    }
+    $proc.WaitForExit()
+    $sw.Stop()
+    # On Windows PowerShell 5.1, Start-Process -RedirectStandardOutput leaves .ExitCode as
+    # $null even after WaitForExit (verified). Treat the actual goal — JSONs in
+    # script-output/ — as the success signal. Exit code is informational.
+    $code      = $proc.ExitCode
+    $jsonCount = @(Get-ChildItem -Path $Config.factorioScriptOutput -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
+    $elapsedS  = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+
+    if ($jsonCount -gt 0) {
+        Write-Host "Headless playback complete in ${elapsedS}s. Exported $jsonCount JSON file(s) to script-output/." -ForegroundColor Green
+        if ($null -ne $code -and $code -ne 0) {
+            Write-Host "Note: Factorio reported exit code $code, but the export landed. See log: $stdout" -ForegroundColor Yellow
+        }
+        return
+    }
+
+    # No JSONs — real failure. Surface diagnostics.
+    Write-Host "--- last 15 stdout lines ---" -ForegroundColor Yellow
+    Get-Content -LiteralPath $stdout -Tail 15 | ForEach-Object { Write-Host "  $_" }
+    if ((Test-Path -LiteralPath $stderr) -and (Get-Item -LiteralPath $stderr).Length -gt 0) {
+        Write-Host "--- stderr ---" -ForegroundColor Yellow
+        Get-Content -LiteralPath $stderr | ForEach-Object { Write-Host "  $_" }
+    }
+    $codeLabel = if ($null -eq $code) { '(unknown)' } else { $code }
+    throw "Factorio --run-replay produced no *.json in $($Config.factorioScriptOutput) after ${elapsedS}s. Exit code: $codeLabel. See log: $stdout"
+}
+
+function Invoke-Run {
+    <#
+        One-shot end-to-end pipeline: install -> headless playback -> extract + clean + rebuild
+        dashboard. Replaces the manual GUI play step. Validates Factorio binary up front so
+        the install step's mutations don't run if the playback step would fail anyway.
+    #>
+    param([string]$ExternalSaveArg, [string]$Name, [object]$Config)
+
+    if ([string]::IsNullOrWhiteSpace($ExternalSaveArg)) {
+        throw "run requires an external save (path, filename, or glob in externalSavesFolder)"
+    }
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        throw "run requires a name (used as the dashboard run identifier, e.g. DS-2_16_04)"
+    }
+
+    Assert-FactorioNotRunning
+    $binary = Resolve-FactorioBinary -Config $Config
+    [void](Assert-FactorioVersionSupportsRunReplay -Binary $binary)
+
+    $sourceZip         = Resolve-SaveInput -InputArg $ExternalSaveArg -ExternalSavesFolder $Config.externalSavesFolder
+    $installedSaveName = [System.IO.Path]::GetFileName($sourceZip)
+
+    Write-Host "=== install ===" -ForegroundColor Cyan
+    Invoke-Install -SaveArg $ExternalSaveArg -Config $Config
+
+    Write-Host ""
+    Write-Host "=== headless playback ===" -ForegroundColor Cyan
+    Invoke-Playback -SaveArg $installedSaveName -Config $Config -Binary $binary
+
+    Write-Host ""
+    Write-Host "=== process (extract + clean + rebuild dashboard) ===" -ForegroundColor Cyan
+    Invoke-Process -Name $Name -SaveToClean $installedSaveName -Config $Config
+
+    Write-Host ""
+    Write-Host "Pipeline complete: $Name" -ForegroundColor Green
+}
+
 function Invoke-Clean {
     param([string]$SaveArg, [object]$Config)
 
@@ -381,8 +571,10 @@ try {
     switch ($Command) {
         'install'        { Invoke-Install -SaveArg $Args[0] -Config $cfg }
         'build'          { Invoke-Build -Config $cfg }
+        'playback'       { Invoke-Playback -SaveArg $Args[0] -Config $cfg }
         'extract'        { Invoke-Extract -Name $Args[0] -SaveToClean $Args[1] -Config $cfg }
         'process'        { Invoke-Process -Name $Args[0] -SaveToClean $Args[1] -Config $cfg }
+        'run'            { Invoke-Run -ExternalSaveArg $Args[0] -Name $Args[1] -Config $cfg }
         'clean'          { Invoke-Clean -SaveArg $Args[0] -Config $cfg }
         'list-saves'     { Invoke-ListSaves -Pattern $Args[0] -Config $cfg }
         'list-installed' { Invoke-ListInstalled -Config $cfg }

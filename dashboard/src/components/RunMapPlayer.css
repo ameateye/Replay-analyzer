@@ -130,6 +130,30 @@
 }
 .run-map-error { color: #cf994b; }
 
+/* Hover tooltip — positioned at cursor inside .run-map-canvas-wrap. */
+.run-map-tooltip {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(12px, 12px);
+  background: rgba(20, 20, 20, 0.92);
+  border: 1px solid #161616;
+  box-shadow: inset 0 0 0 1px #8f8f8f33;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  color: #b8b8b8;
+  z-index: 2;
+}
+.run-map-tooltip-name {
+  color: #ffe6c0;
+  font-weight: 600;
+}
+.run-map-tooltip-coords {
+  font-variant-numeric: tabular-nums;
+  color: #b8b8b8;
+}
+
 /* Player marker: cream dot with a translucent orange halo so it stays
    visible across belt colors and at any zoom level. */
 .run-map-player-halo {

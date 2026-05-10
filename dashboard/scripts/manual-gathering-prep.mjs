@@ -48,7 +48,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'recipes.json');
 const RECIPES_GAME_DATA = JSON.parse(fs.readFileSync(RECIPES_PATH, 'utf8'));
 
-const STATUS_KEYS = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
+const STATUS_KEYS = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
 
 // Items whose gathering is meaningful past the burner phase. Stone and
 // coal mining post-burner-phase is irrelevant to the run analysis (the

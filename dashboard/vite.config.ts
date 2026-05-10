@@ -35,8 +35,8 @@ function gameDataServer(): Plugin {
     closeBundle() {
       if (!fs.existsSync(GAME_DATA_DIR)) return;
       const dest = path.resolve(__dirname, 'dist', 'game-data');
-      // Recurse: subdirs (e.g. map-sprites/<run>.json) need to come along
-      // so the build subpath matches the dev middleware.
+      // Recurse just in case game-data ever grows subdirs again — current
+      // contents are all flat JSON files (incl. the shared map-sprites.json).
       const walk = (src: string, dst: string) => {
         fs.mkdirSync(dst, { recursive: true });
         for (const f of fs.readdirSync(src, { withFileTypes: true })) {

@@ -23,7 +23,7 @@ import { buildRecipeRow, CAPACITY_CFG } from './end-game-production-prep.mjs';
 import { buildBufferSeries, bufferApproachesCapacity } from './end-game/buffer.mjs';
 import { buildProductionSeries } from './end-game/production.mjs';
 
-const STATUS_KEYS = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
+const STATUS_KEYS = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'recipes.json');

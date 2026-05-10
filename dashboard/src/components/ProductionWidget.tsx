@@ -25,9 +25,13 @@ import { containerXY, TooltipRow, type TooltipState } from './Tooltip';
 // resource): same line rendering as 'buffer' but no chest/inv wording — the
 // row label carries the meaning. Data prep stores the per-tick scalar in
 // `bufferWithInv` for both, so the line path is identical.
-export type ProductionMode = 'rate' | 'cum' | 'buffer' | 'fluid-buffer' | 'count';
+// 'twoLine' renders two solid line series in the same row: the focus line
+// (`bufferWithInv`, drawn brighter) and a context line (`buffer`, drawn
+// faded above). Used by the Front-side mall-items rows where we want to
+// see "in hand" vs "in hand + boxes" simultaneously without stacking.
+export type ProductionMode = 'rate' | 'cum' | 'buffer' | 'fluid-buffer' | 'count' | 'twoLine';
 
-type StatusKey = 'no_ingredients' | 'no_fuel' | 'full_output' | 'low_power' | 'unknown';
+type StatusKey = 'no_ingredients' | 'no_fuel' | 'full_output' | 'low_power' | 'depleted' | 'unknown';
 
 // One stacked source within a combined rate row (e.g. basic + advanced oil
 // processing under a single "Refinery throughput" row). Per-component
@@ -100,6 +104,11 @@ type Props = {
   // standard "peak X" / "total Y" wording doesn't fit the row's story —
   // e.g. burner rows that want "X burners running for Y minutes".
   headlineOverride?: string;
+  // Tooltip label override for twoLine mode. Defaults to "hand" /
+  // "+ boxes" (Front-side mall framing); the Front-side miners tab
+  // overrides to "working" / "built" since the same renderer is reused
+  // for drill counts.
+  twoLineLabels?: { primary: string; secondary: string };
 };
 
 const bisectMinute = bisector<number, number>(m => m).left;
@@ -115,9 +124,10 @@ const STATUS_COLOR: Record<StatusKey, string> = {
   no_fuel:        '#1a1a1a',
   full_output:    '#fbbb27',
   low_power:      '#b14df5',
+  depleted:       '#6b8e23',
   unknown:        '#a09c97',
 };
-const LOSS_STATUS_ORDER: StatusKey[] = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
+const LOSS_STATUS_ORDER: StatusKey[] = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
 
 export function ProductionRow({
   recipe,
@@ -134,6 +144,7 @@ export function ProductionRow({
   metaOverride,
   componentMeta,
   headlineOverride,
+  twoLineLabels,
 }: Props) {
   const gameData = useGameData();
   const lookupMeta = recipeMeta(gameData, recipe.recipe);
@@ -153,13 +164,15 @@ export function ProductionRow({
   );
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  const isLineMode = mode === 'buffer' || mode === 'fluid-buffer' || mode === 'count';
-  const showLimit = isLineMode && mode !== 'count'
+  const isLineMode = mode === 'buffer' || mode === 'fluid-buffer' || mode === 'count' || mode === 'twoLine';
+  const showLimit = isLineMode && mode !== 'count' && mode !== 'twoLine'
     && recipe.showBufferLimit && recipe.bufferLimit != null;
   const peak = mode === 'rate'
     ? Math.max(recipe.peakPotential, recipe.peakActual)
     : mode === 'cum'
     ? recipe.finalCum
+    : mode === 'twoLine'
+    ? Math.max(recipe.peakBuffer, recipe.peakBufferWithInv)
     : showLimit
     ? Math.max(recipe.peakBufferWithInv, recipe.peakBufferLimit)
     : recipe.peakBufferWithInv;
@@ -188,7 +201,7 @@ export function ProductionRow({
       x,
       y,
       placement: 'top',
-      content: buildProductionTooltip(recipe, meta, minutes, idx, mode, renderComponents),
+      content: buildProductionTooltip(recipe, meta, minutes, idx, mode, renderComponents, twoLineLabels),
     });
   };
 
@@ -207,6 +220,9 @@ export function ProductionRow({
       ? yScale(recipe.cum[hoverIdx])
       : yScale(recipe.bufferWithInv[hoverIdx]);
   const hoverColor = mode === 'rate' ? ACTUAL_LINE : meta.color;
+  const hoverYUpper = hoverIdx == null || mode !== 'twoLine'
+    ? null
+    : yScale(recipe.buffer[hoverIdx]);
 
   const headline = headlineOverride ?? (
     mode === 'rate'
@@ -217,6 +233,8 @@ export function ProductionRow({
     ? `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')} · ${recipe.chestCount} tank${recipe.chestCount === 1 ? '' : 's'}`
     : mode === 'count'
     ? `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')}`
+    : mode === 'twoLine'
+    ? `hand peak ${recipe.peakBufferWithInv.toLocaleString('en-US')} · +boxes ${recipe.peakBuffer.toLocaleString('en-US')}`
     : `peak ${recipe.peakBufferWithInv.toLocaleString('en-US')} · ${recipe.chestCount} chest${recipe.chestCount === 1 ? '' : 's'} + inv`
   );
 
@@ -285,6 +303,8 @@ export function ProductionRow({
 
         {mode === 'rate'
           ? renderRateMode(recipe, renderComponents, minutes, xScale, yScale, rowH)
+          : mode === 'twoLine'
+          ? renderTwoLineMode(recipe, meta.color, minutes, xScale, yScale)
           : renderLineMode(recipe, meta.color, minutes, xScale, yScale, mode === 'cum' ? 'cum' : 'buffer')}
 
         {/* Compact y-axis tick: max value at top */}
@@ -300,7 +320,7 @@ export function ProductionRow({
           {formatTickShort(yScale.domain()[1])}
         </text>
 
-        {/* Hover crosshair + dot */}
+        {/* Hover crosshair + dot. twoLine mode dots both lines. */}
         {hoverX != null && hoverY != null && (
           <g pointerEvents="none">
             <line
@@ -314,6 +334,9 @@ export function ProductionRow({
               strokeDasharray="3 3"
             />
             <circle cx={hoverX} cy={hoverY} r={3} fill={hoverColor} stroke="#fff" strokeWidth={1} />
+            {hoverYUpper != null && (
+              <circle cx={hoverX} cy={hoverYUpper} r={3} fill={hoverColor} fillOpacity={0.45} stroke="#fff" strokeWidth={1} />
+            )}
           </g>
         )}
 
@@ -351,6 +374,7 @@ function buildProductionTooltip(
   i: number,
   mode: ProductionMode,
   renderComponents?: RenderComponent[],
+  twoLineLabels?: { primary: string; secondary: string },
 ) {
   const t = fmtTime(minutes[i]);
   const actual = recipe.actual[i];
@@ -384,6 +408,21 @@ function buildProductionTooltip(
             color={meta.color}
             value={buf.toLocaleString('en-US')}
             active
+          />
+        </div>
+      ) : mode === 'twoLine' ? (
+        <div className="chart-tooltip__tabs">
+          <Tab
+            label={twoLineLabels?.primary ?? 'hand'}
+            color={meta.color}
+            value={recipe.bufferWithInv[i].toLocaleString('en-US')}
+            active
+          />
+          <Tab
+            label={twoLineLabels?.secondary ?? '+ boxes'}
+            color={meta.color}
+            value={recipe.buffer[i].toLocaleString('en-US')}
+            active={false}
           />
         </div>
       ) : (
@@ -465,7 +504,7 @@ function renderRateDetails(
     if (v > 0) losses.push({ color: FLUID_PALETTE[idx % FLUID_PALETTE.length], label: name, value: v });
   }
   for (const name of LOSS_STATUS_ORDER) {
-    const v = recipe.statusLoss[name][i];
+    const v = recipe.statusLoss[name]?.[i] ?? 0;
     if (v > 0) losses.push({ color: STATUS_COLOR[name], label: name.replace(/_/g, ' '), value: v });
   }
   losses.sort((a, b) => b.value - a.value);
@@ -619,6 +658,41 @@ function renderLineMode(
   );
 }
 
+// Two-line mode: bufferWithInv (focus, brighter) plus buffer (context, faded
+// upper line). Used by Front-side mall rows where the user wants to read
+// "in hand now" and "in hand + boxes" off the same row at a glance.
+function renderTwoLineMode(
+  recipe: Recipe,
+  color: string,
+  minutes: number[],
+  xScale: ScaleLinear<number, number>,
+  yScale: ScaleLinear<number, number>,
+) {
+  const handPts = minutes.map((m, i) => ({ minute: m, value: recipe.bufferWithInv[i] }));
+  const totalPts = minutes.map((m, i) => ({ minute: m, value: recipe.buffer[i] }));
+  return (
+    <>
+      <LinePath
+        data={totalPts}
+        x={p => xScale(p.minute)}
+        y={p => yScale(p.value)}
+        stroke={color}
+        strokeWidth={1.25}
+        strokeOpacity={0.45}
+        strokeDasharray="3 2"
+      />
+      <LinePath
+        data={handPts}
+        x={p => xScale(p.minute)}
+        y={p => yScale(p.value)}
+        stroke={color}
+        strokeWidth={1.75}
+        strokeOpacity={0.95}
+      />
+    </>
+  );
+}
+
 function renderRateMode(
   recipe: Recipe,
   renderComponents: RenderComponent[] | undefined,
@@ -663,7 +737,7 @@ function renderRateMode(
   const lossAt = (i: number, key: StackKey): number => {
     if (key.kind === 'item')   return recipe.itemLoss[key.name]?.[i] ?? 0;
     if (key.kind === 'fluid')  return recipe.fluidLoss[key.name]?.[i] ?? 0;
-    return recipe.statusLoss[key.name][i];
+    return recipe.statusLoss[key.name]?.[i] ?? 0;
   };
 
   const buildLayer = (idx: number): Layer[] => {

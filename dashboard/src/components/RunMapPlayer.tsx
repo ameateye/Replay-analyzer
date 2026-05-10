@@ -103,7 +103,9 @@ export function RunMapPlayer({ runName }: { runName: string }) {
 
   type VB = { x: number; y: number; w: number; h: number };
   const [vb, setVb] = useState<VB | null>(null);
+  const [tooltip, setTooltip] = useState<{ name: string; px: number; py: number; sx: number; sy: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const entitiesRef = useRef<SVGGElement>(null);
   const recipesRef = useRef<SVGGElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; vb0: VB } | null>(null);
@@ -115,15 +117,15 @@ export function RunMapPlayer({ runName }: { runName: string }) {
   // Last applied recipe-event index per entity (entityIdx → eventIdx, -1 = none).
   const lastRecipeIdx = useRef(new Map<number, number>());
 
-  // Fetch map data + sprites in parallel. Sprites live in game-data so the
-  // browser caches them under the same URL contract as the rest of the
-  // shared assets (and per-run map.json stays small).
+  // Fetch map data + sprites in parallel. Sprites live in game-data as a
+  // single shared atlas across all runs — cached once by the browser, reused
+  // when switching runs, while per-run map.json stays small.
   useEffect(() => {
     let cancelled = false;
     setData(null); setSprites(null); setErr(null);
     const mapUrl = mapUrlFor(runName);
     if (!mapUrl) { setErr(`no map data for ${runName}`); return; }
-    const spritesUrl = `${import.meta.env.BASE_URL}game-data/map-sprites/${runName}.json`;
+    const spritesUrl = `${import.meta.env.BASE_URL}game-data/map-sprites.json`;
     Promise.all([
       fetch(mapUrl).then(r => { if (!r.ok) throw new Error(`${r.status} ${mapUrl}`); return r.json(); }),
       fetch(spritesUrl).then(r => { if (!r.ok) throw new Error(`${r.status} ${spritesUrl}`); return r.json(); }),
@@ -285,6 +287,32 @@ export function RunMapPlayer({ runName }: { runName: string }) {
     dragRef.current = null;
     (e.currentTarget as Element).releasePointerCapture(e.pointerId);
   };
+
+  // Hover tooltip — event delegation on the SVG. Recipe overlays already
+  // disable pointer events, so the topmost hit is always an entity <use>.
+  const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (dragRef.current) { if (tooltip) setTooltip(null); return; }
+    const t = e.target as Element;
+    if (!(t instanceof SVGUseElement)) { if (tooltip) setTooltip(null); return; }
+    const name = t.getAttribute('data-name');
+    const pxStr = t.getAttribute('data-px');
+    const pyStr = t.getAttribute('data-py');
+    if (name === null || pxStr === null || pyStr === null) {
+      if (tooltip) setTooltip(null);
+      return;
+    }
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    setTooltip({
+      name,
+      px: parseFloat(pxStr),
+      py: parseFloat(pyStr),
+      sx: e.clientX - rect.left,
+      sy: e.clientY - rect.top,
+    });
+  };
+  const onMouseLeave = () => { if (tooltip) setTooltip(null); };
   const resetView = () => {
     if (!data) return;
     const [x, y, w, h] = data.viewBox;
@@ -325,6 +353,8 @@ export function RunMapPlayer({ runName }: { runName: string }) {
         data-en={e.en}
         data-l={e.L}
         data-tb={e.tb}
+        data-px={e.px}
+        data-py={e.py}
       />
     ));
   }, [data]);
@@ -404,7 +434,7 @@ export function RunMapPlayer({ runName }: { runName: string }) {
         <button className="run-map-btn" onClick={resetView} aria-label="Reset view">⤢</button>
       </div>
 
-      <div className="run-map-canvas-wrap" style={containerStyle}>
+      <div className="run-map-canvas-wrap" ref={wrapRef} style={containerStyle}>
         <svg
           ref={svgRef}
           className="run-map-canvas"
@@ -415,6 +445,8 @@ export function RunMapPlayer({ runName }: { runName: string }) {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onMouseMove={onMouseMove}
+          onMouseLeave={onMouseLeave}
         >
           <defs>{symbols}</defs>
           <g ref={entitiesRef} id="run-map-entities">{uses}</g>
@@ -426,6 +458,17 @@ export function RunMapPlayer({ runName }: { runName: string }) {
             </g>
           )}
         </svg>
+        {tooltip && (
+          <div
+            className="run-map-tooltip"
+            style={{ left: tooltip.sx, top: tooltip.sy }}
+          >
+            <div className="run-map-tooltip-name">{tooltip.name}</div>
+            <div className="run-map-tooltip-coords">
+              x {tooltip.px.toFixed(1)} · y {tooltip.py.toFixed(1)}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

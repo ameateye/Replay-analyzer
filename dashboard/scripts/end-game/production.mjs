@@ -17,7 +17,7 @@
 // 0). The empirical-streak path remains as a fallback for any recipe missing
 // from craftTimes.
 
-const LOSS_STATUS_ORDER = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'unknown'];
+const LOSS_STATUS_ORDER = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
 const SMOOTH_HALF_WINDOW = 12; // ±12 periods × 5 s ≈ ±1 min
 
 function smooth(values, halfWindow) {

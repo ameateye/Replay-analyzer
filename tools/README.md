@@ -18,14 +18,18 @@ extracted-data/<run>/*.json
 tools/output/<run>.json + <run>.timing.json     (synthetic blueprint + timing sidecar)
     │  java -cp ... ReplaySvgRender <run>.json <run>.svg
     ▼
-tools/output/<run>.manifest.json                 (sprite atlas + entity placements)
+tools/output/<run>.manifest.json                 (transient — sprite atlas + entity placements)
     │  node dashboard/scripts/map-prep.mjs <run>
-    ▼
+    │     │ folds direction/beltToGroundType mutations through rocketLaunch
+    │     │ rebinds each entity's sid to its end-of-run orientation
+    │     │ merges sprites into the shared atlas
+    │     │ DELETES the manifest after a successful write
+    │     ▼
 dashboard/public/map-data/<run>.map.json         (committed; small)
-game-data/map-sprites/<run>.json                 (committed; sprite atlas)
+game-data/map-sprites.json                       (committed; shared sprite atlas, merged across runs)
 ```
 
-The Java step is the heavy one; the two Node steps just reshape JSON.
+The Java step is the heavy one; the two Node steps just reshape JSON. The manifest is transient — its data is fully captured by (atlas + per-run map.json) once map-prep finishes, so map-prep unlinks it. To re-run map-prep you re-render with FBSR.
 
 ## One-time setup
 
@@ -109,7 +113,7 @@ node dashboard/scripts/map-prep.mjs <run>
 
 `<run>` is the run folder name under `extracted-data/`, e.g. `DS-2_14_45`.
 
-The dashboard's [RunMapPlayer.tsx](../dashboard/src/components/RunMapPlayer.tsx) fetches the resulting `.map.json` and `map-sprites/<run>.json` at runtime.
+The dashboard's [RunMapPlayer.tsx](../dashboard/src/components/RunMapPlayer.tsx) fetches the resulting `.map.json` and the shared `map-sprites.json` at runtime.
 
 ## What's in here
 

@@ -1,152 +1,167 @@
 # Replay Analyzer
 
-Tools and a React dashboard for analyzing Factorio Death-March / speedrun replays. Wraps [GlassBricks/factorio-replay-data-collection](https://github.com/GlassBricks/factorio-replay-data-collection) so the inject-and-extract workflow runs without bash/zip on Windows.
+A pacing‑analysis lens for Factorio speedruns.
 
-- `dashboard/` — Vite + React dashboard rendering charts for one chosen run. The pre-built data is committed; deploys to GitHub Pages on push.
-- `tools/` + `replay-tool.cmd` — Windows wrapper for the inject-and-extract workflow.
-- `game-data/` — multi-run reference assets (tech requirements, wiki icon URLs, science-pack tiers/colors, recipe metadata, build-phase definitions). Used by both the data-build scripts and the React app.
+Three things you can do here:
 
-## Layout
+- **See top runs through the lens.** A live curated dashboard of top DS runs (currently Zaspar's), broken down by phase, lab saturation, end‑game throughput, oil routing, and full‑build composition.
+  → [Live dashboard](https://ameateye.github.io/Replay-analyzer/)
 
-- `factorio-replay-data-collection/` — upstream extraction mod (clone separately; gitignored). `out/control.lua` is the build artifact.
-- `config.json` — your personal paths. Gitignored. See `config.example.json`.
-- `tools/replay-tool.ps1` — the wrapper. Run `replay-tool help` for full usage.
-- `replay-tool.cmd` — shim so you can call the tool from cmd.exe / Git Bash.
-- `extracted-data/` — exported JSON per run (gitignored; lives only on your machine).
-- `dashboard/` — React dashboard (see [Dashboard](#dashboard) below).
-- `game-data/` — multi-run reference assets, served at `/game-data/*` to the React app.
+- **Run the lens on your own save.** Windows tooling injects the data collection layer into your save, pulls the replay's JSONs out, and rebuilds the dashboard with your run added. View it locally — or contribute it back to the published showcase.
+  → [Run on your replay](#run-the-lens-on-your-own-save) · [Contribute your run](#contribute-your-run)
+
+- **Build new lenses or contribute to the tool.** The dashboard's analytical surface (charts, phase widgets, recipe configs) is modular. Add a new view, extend the phase model to other categories, or fork the whole thing for your own showcase.
+  → [CONTRIBUTING.md](CONTRIBUTING.md)
+
+The data collection layer is [ameateye/factorio-replay-analysis](https://github.com/ameateye/factorio-replay-analysis), a fork of GlassBricks's original tool that captures replay state via a `control.lua` injection (no Factorio mod required). This repo is the analytical layer on top: a Windows runner that connects to the collection layer and extracts JSONs without bash or `zip`, plus a React + Vite dashboard that renders the pacing‑level views.
+
+The lens is currently calibrated for **Zaspar's plan** specifically. Phase boundaries (especially how each phase's *end* is detected) are tuned to his strategy; widget selection reflects his common bottlenecks; chart design is mostly generic. Other plans/runners can fork the phase model — see [CONTRIBUTING.md → Add a category](CONTRIBUTING.md#add-a-category-or-extend-an-existing-one).
 
 ---
 
-## Replay tool (Windows)
+## See top runs through the lens
 
-### First-time setup
+→ **[ameateye.github.io/Replay-analyzer](https://ameateye.github.io/Replay-analyzer/)**
+
+The dashboard reads top‑to‑bottom: an overview header (run‑level summary + phase strip + lab saturation), then a phase analyzer pane below that swaps content based on the active phase (Burner / Front side / Oil / Mixed / Full build / Late game). Get the overview, then dive deeper into the phase that interests you.
+
+Currently published: three top DS runs (Zaspar's). Use the run picker in the header to switch.
+
+---
+
+## Run the lens on your own save
+
+The replay tool is **Windows‑only** (Factorio's saves folder + PowerShell are the constraints). The dashboard itself runs on any platform.
+
+### Prerequisites
+
+- Windows 10/11 with Factorio installed
+- Node.js 20+ (any 20.x release)
+- PowerShell 5.1 or 7+
+- Git
+
+### One‑time setup
 
 ```cmd
-:: 1. Clone the upstream extraction mod into this folder
-git clone https://github.com/GlassBricks/factorio-replay-data-collection
+:: From this repo's root.
 
-:: 2. Build it (Node 20+; see "Rebuilding control.lua" below for the gotcha)
-cd factorio-replay-data-collection
+:: 1. Clone the data collection layer (use this fork — actively maintained alongside the analyzer)
+git clone https://github.com/ameateye/factorio-replay-analysis
+
+:: 2. Build it (see "npm install gotcha" below)
+cd factorio-replay-analysis
 npm install --ignore-scripts
 npm run build
 cd ..
 
-:: 3. Copy the example config and edit paths for your machine
+:: 3. Copy the example config and edit paths to match your machine
 copy config.example.json config.json
+
+:: 4. Install dashboard deps (one-time)
+cd dashboard
+npm install
+cd ..
 ```
 
-### Workflow per replay
+**npm install gotcha.** `factoriomod-debug` ships a `.ts` postinstall script that Node 20 can't load. Always pass `--ignore-scripts` when installing the data collection layer's deps. The TSTL build itself is unaffected.
+
+### Per‑replay workflow
 
 ```cmd
-:: 1. Locate the save in your external-saves folder
+:: 1. Find the save in your external-saves folder
 replay-tool list-saves "DSMP*"
 
-:: 2. Inject control.lua and copy the save into Factorio's saves folder
+:: 2. Inject the extraction mod into a copy of the save and put it in
+::    Factorio's saves folder. Your original save in externalSavesFolder
+::    is never touched.
 replay-tool install "DSMP 01_47_59.zip"
 
 :: 3. -- in Factorio --
-::    open the save, play the replay, save at the desired point,
-::    load that save, run /export-replay-data in the console.
-::    (data also auto-exports on first rocket launch)
+::    Open the save, play the replay, save at the desired point, load that
+::    save, then run /export-replay-data in the console.
+::    (Data also auto-exports on first rocket launch.)
 
-:: 4. Move the JSONs out of script-output AND remove the save from Factorio
-replay-tool extract DSMP-run-1 "DSMP 01_47_59.zip"
-```
+:: 4. Pull the JSONs into extracted-data/<name>/, clean the modified save,
+::    AND rebuild the dashboard's per-run JSON in one shot.
+replay-tool process DSMP-run-1 "DSMP 01_47_59.zip"
 
-`extract <name> [save]` is the one-shot: it moves every `*.json` from Factorio's `script-output` into `extracted-data\<name>\`, then deletes the named save from the Factorio saves folder. If you skip the save argument, only the JSONs are moved — useful if you want to do more in Factorio first.
-
-The original save in your external-saves folder is never touched. The modified save in Factorio's saves folder is regenerable any time via `install`.
-
-### All subcommands
-
-| Command | What it does |
-|---|---|
-| `install <save>` | Copy save from `externalSavesFolder` to Factorio saves, replace `control.lua` inside |
-| `extract <name> [save]` | Move JSONs to `extracted-data\<name>\`; if `save` given, also clean it |
-| `clean <save>` | Just delete a save from the Factorio saves folder |
-| `list-saves [pattern]` | List zip files in `externalSavesFolder` (optionally filtered by glob) |
-| `list-installed` | List zip files in the Factorio saves folder |
-| `build` | Run `npm run build` to regenerate `out/control.lua` |
-| `config` | Print the resolved configuration |
-| `help` | Full help text |
-
-`<save>` arguments accept a full path, a filename (with or without `.zip`), or a glob pattern.
-
-### Rebuilding control.lua
-
-Only needed if you edit `factorio-replay-data-collection/src/main.ts` (e.g. to add or remove data collectors).
-
-```cmd
-replay-tool build
-```
-
-`npm install` was run with `--ignore-scripts` — `factoriomod-debug` ships a `.ts` postinstall that Node 20 can't load. The TSTL build itself works fine.
-
-### Configured paths
-
-`config.json` defines five paths the wrapper uses:
-
-| Key | What it is |
-|---|---|
-| `externalSavesFolder` | Where you keep .zip saves you've received from elsewhere (Discord, contests, other runners). Not a generic "downloads" concept — point it wherever you actually store these. |
-| `factorioSavesFolder` | Factorio's own saves folder, typically `%APPDATA%\Factorio\saves`. |
-| `factorioScriptOutput` | Where Factorio writes the exported JSONs, typically `%APPDATA%\Factorio\script-output`. |
-| `extractedDataFolder` | Destination folder under this repo where `extract` parks per-run JSONs. |
-| `repoPath` / `controlLuaPath` | Your local clone of `factorio-replay-data-collection` and its built `out/control.lua`. |
-
-### Output JSONs (per run)
-
-Each run produces these files in `<extractedDataFolder>\<name>\`:
-
-| File | Content |
-|---|---|
-| `bufferAmounts.json` | Buffer chest contents over time |
-| `labContents.json` | Research progress and lab inputs |
-| `machineProduction.json` | Recipe runs across assemblers, chemical plants, refineries, furnaces |
-| `playerInventory.json` | Periodic inventory snapshots + crafting queue/events |
-| `playerPosition.json` | Player movement track |
-| `researchTiming.json` | Tech research start/finish times |
-| `roboportUsage.json` | Roboport stats |
-| `rocketLaunchTime.json` | Rocket launch timestamps |
-
----
-
-## Dashboard
-
-React + Vite dashboard for single-run replay analysis. Live build is auto-deployed to GitHub Pages via [.github/workflows/deploy-dashboard.yml](.github/workflows/deploy-dashboard.yml) on push to `main`.
-
-### Setup
-
-```sh
+:: 5. View the run locally
 cd dashboard
-npm install
 npm run dev
 ```
 
-Open the URL Vite prints (typically http://localhost:5173).
+Open the URL Vite prints (typically http://localhost:5173). Your new run shows up in the run picker.
 
-The dashboard reads from `dashboard/src/data/<run>.json`, which is committed. You don't need raw replay data to run or build the dashboard.
+### Subcommand reference
 
-### Rebuilding the per-run JSON
+| Command | What it does |
+|---|---|
+| `install <save>` | Copy save from `externalSavesFolder` into Factorio's saves folder, replacing `control.lua` with the mod's build artifact |
+| `process <name> [save]` | One‑shot: `extract` + (optional) `clean` + rebuild dashboard data via `npm run data` |
+| `extract <name> [save]` | Move every `*.json` from Factorio's `script-output` into `extracted-data\<name>\`. If `save` given, also delete that save from the Factorio saves folder |
+| `clean <save>` | Delete a save from the Factorio saves folder (the original in `externalSavesFolder` is never touched) |
+| `list-saves [pattern]` | List zip files in `externalSavesFolder`, optionally filtered by glob |
+| `list-installed` | List zip files currently in the Factorio saves folder |
+| `build` | Run `npm run build` in the data collection layer to regenerate `out/control.lua` |
+| `config` | Print the resolved configuration |
+| `help` | Full help text |
 
-`dashboard/src/data/<run>.json` is derived from `extracted-data/<run>/*.json`. To regenerate it for a new run:
+`<save>` arguments accept a full path, a filename (with or without `.zip`), or a glob pattern resolved against `externalSavesFolder`.
 
-```sh
-cd dashboard
-npm run data ../extracted-data/<your-run-folder>
+### Config keys (`config.json`)
+
+| Key | What it is |
+|---|---|
+| `externalSavesFolder` | Where you keep `.zip` saves received from elsewhere (Discord, contests, other runners). Typically your download folder |
+| `factorioSavesFolder` | Factorio's own saves folder, typically `%APPDATA%\Factorio\saves` |
+| `factorioScriptOutput` | Where Factorio writes exported JSONs, typically `%APPDATA%\Factorio\script-output` |
+| `extractedDataFolder` | Destination under this repo where `extract` parks per‑run JSONs |
+| `dashboardPath` | Absolute path to the `dashboard/` directory in this repo |
+| `repoPath` / `controlLuaPath` | Your local clone of the data collection layer (`factorio-replay-analysis`) and its built `out/control.lua` |
+| `nodePath` (optional) | Override Node directory if `npm` isn't on PATH (e.g. when using fnm) |
+
+For the per‑run output JSON schema (what the extractor writes and how the dashboard consumes it), see [CONTRIBUTING.md → The data layer](CONTRIBUTING.md#the-data-layer).
+
+---
+
+## Contribute your run
+
+If you've run the lens on your own save and want it on the published dashboard, three paths in increasing friction:
+
+1. **Web edit on a fork** — fork this repo, navigate to `dashboard/src/data/`, click "Add file" → "Upload files" and upload your built `<run>.json`, then re‑generate `index.ts` (instructions in [CONTRIBUTING.md](CONTRIBUTING.md#1-add-your-run-to-the-published-dashboard)) and open a PR. No clone needed.
+2. **Local clone + PR** — fork, clone, run `npm run data ../extracted-data/<run>` against the run you've extracted, push, PR. The standard dev path.
+3. **Self‑host your own dashboard** — fork and host on your own GitHub Pages. No PR needed, full control. Useful if you want a personal showcase rather than a contribution to this one. See [CONTRIBUTING.md → Fork and self‑host](CONTRIBUTING.md#fork-and-self-host).
+
+PRs to the published dashboard are reviewed by the maintainer ([@ameateye](https://github.com/ameateye)).
+
+---
+
+## Build new lenses, fix bugs, or extend to other categories
+
+The full developer guide — code map, dev setup, how to add a chart / widget / category / metric, conventions, gotchas — lives in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
+Agent‑targeted reference (for Claude Code, Cursor, Codex, etc.): **[AGENTS.md](AGENTS.md)**.
+
+---
+
+## Layout (high‑level)
+
+```
+dashboard/                  React + Vite app — the only deployed surface
+tools/replay-tool.ps1       Windows wrapper for the extraction mod
+replay-tool.cmd             Shim so the wrapper runs from cmd / Git Bash
+game-data/                  Cross-run reference (tech, recipes, science packs, phases)
+config.example.json         Template for your local config.json
+factorio-replay-analysis/   Data collection layer (cloned separately, gitignored)
+extracted-data/             Per-run extracted JSONs (local only, gitignored)
 ```
 
-This rewrites `src/data/<run>.json` and `src/data/index.ts` so the dashboard picks up the new run on next dev / build.
+The deployed dashboard is auto‑built and pushed to GitHub Pages on every push to `main` via [.github/workflows/deploy-dashboard.yml](.github/workflows/deploy-dashboard.yml).
 
-### Layout
+---
 
-- `dashboard/src/components/` — visx-based React components (RunOverview, EndGameWidgets, …)
-- `dashboard/src/data/` — committed pre-built per-run JSON (run-specific only; no game-data)
-- `dashboard/src/server/` — runtime loaders for shared cross-run game-data (fetched from `/game-data/*`)
-- `dashboard/scripts/build-run-data.mjs` — entry for `npm run data`. Reads raw extracted JSONs, writes the compact dashboard input. Wraps:
-  - `scripts/lab-saturation-prep.mjs` — research / lab-saturation series
-  - `scripts/phase-boundaries.mjs` — strategic build-phase boundaries
-  - `scripts/end-game-production-prep.mjs` — end-game widget series, split into per-recipe submodules under `scripts/end-game/`
+## License
 
-Tech icons / requirements / science-pack metadata / recipe metadata / phase metadata live in `game-data/` and are served at `/game-data/*` by a small Vite middleware in dev (and copied into `dist/game-data/` on build). The React app fetches them once at startup via `GameDataProvider`, so they stay reusable across runs and across charts.
+MIT — see [LICENSE](LICENSE).
+
+The data collection layer ([ameateye/factorio-replay-analysis](https://github.com/ameateye/factorio-replay-analysis), forked from [GlassBricks/factorio-replay-data-collection](https://github.com/GlassBricks/factorio-replay-data-collection)) is its own project; refer to its repo for its license.

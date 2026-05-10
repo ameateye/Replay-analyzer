@@ -1,4 +1,4 @@
-/* Map player — chrome matches the dashboard's panel idiom (dark gray,
+/* Map view — chrome matches the dashboard's panel idiom (dark gray,
    in-game grays, cream caption color, brand-orange used only as accent).
    Color tokens duplicated here from theme.ts so the CSS is self-contained;
    keep in sync if those values change. */
@@ -129,6 +129,20 @@
   color: #888;
 }
 .run-map-error { color: #cf994b; }
+
+/* Chrome layer — absolute over the canvas, in screen coords (does not
+   pan/zoom). Overlay components portal HTML legends / status badges
+   into here via MapViewChromeContext. The wrapper itself is non-
+   interactive; individual children opt back in with pointer-events. */
+.run-map-chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.run-map-chrome > * {
+  pointer-events: auto;
+}
 
 /* Hover tooltip — positioned at cursor inside .run-map-canvas-wrap. */
 .run-map-tooltip {

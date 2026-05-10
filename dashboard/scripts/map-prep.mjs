@@ -1,7 +1,15 @@
 // Joins the FBSR atlas manifest with the timing sidecar produced by
 // fbsr-prep, and writes the two files the React player needs at runtime:
-// a small map-data JSON (entities + viewBox + timeline) and a single
+// a small map-data JSON (entities + viewBox + timelines) and a single
 // cross-run sprite atlas served from game-data.
+//
+// Three dynamic-overlay arrays are emitted alongside the renderable
+// entities, each parallel to the recipe-overlay pattern:
+//   recipeMachines[]  — one per machine that ever set a recipe
+//   splitterMarkers[] — one per splitter that ever had non-default state
+//   inserterMarkers[] — one per inserter that ever had useFilters + filters
+// Each carries the entity's (en, name, px, py [, dir]) plus a pre-filtered
+// state timeline. MapView walks each timeline to drive visibility / href.
 //
 // Inputs (under tools/output/):
 //   <RUN>.manifest.json   — { viewBox, sprites: {id→{w,h,data}},
@@ -225,9 +233,10 @@ try {
 // Recipe overlay: one entry per machine that ever ran a recipe, decoupled
 // from the renderable list (an entity has multiple renderables now, but
 // only one recipe overlay). Dropped events whose sprite didn't make it
-// into the atlas (resolver miss).
+// into the atlas (resolver miss). `tr` mirrors the entity's removal tick
+// so the recipe icon hides when the machine is mined.
 const spriteIds = new Set(Object.keys(manifest.sprites));
-const recipeMachineSeen = new Map();   // en → { en, name, px, py, rs }
+const recipeMachineSeen = new Map();   // en → { en, name, px, py, tr?, rs }
 let droppedRecipeEntries = 0;
 for (const e of manifest.entities) {
   const t = timing[e.en];
@@ -236,9 +245,58 @@ for (const e of manifest.entities) {
   const filtered = t.rs.filter(r => spriteIds.has(`r:${r.n}`));
   droppedRecipeEntries += t.rs.length - filtered.length;
   if (filtered.length === 0) continue;
-  recipeMachineSeen.set(e.en, { en: e.en, name: e.name, px: e.px, py: e.py, rs: filtered });
+  const m = { en: e.en, name: e.name, px: e.px, py: e.py, rs: filtered };
+  if (t.tr !== undefined) m.tr = t.tr;
+  recipeMachineSeen.set(e.en, m);
 }
 const recipeMachines = [...recipeMachineSeen.values()];
+
+// Splitter alt-mode overlay: one entry per splitter that ever had a
+// non-default state. Direction comes from the folded cutoff map so the
+// React side can rotate the priority arrows correctly. Filter-item names
+// in the timeline are kept verbatim — the React side checks the atlas at
+// render time, same way recipe overlays do, so a missing icon just hides
+// that one badge instead of dropping the whole entity.
+const splitterSeen = new Map();   // en → marker
+let droppedSplitterFilters = 0;
+for (const e of manifest.entities) {
+  const t = timing[e.en];
+  if (!t || !t.ss || t.ss.length === 0) continue;
+  if (splitterSeen.has(e.en)) continue;
+  // Drop events that contribute nothing (no priority, no filter); keep at
+  // least one event so the React side has a state to render against.
+  const evs = t.ss;
+  for (const ev of evs) if (ev.f && !spriteIds.has(`f:${ev.f}`)) droppedSplitterFilters++;
+  const cur = cutByUn.get(t.un);
+  const dir = cur ? (cur.dir ?? 0) : 0;
+  const m = { en: e.en, name: e.name, px: e.px, py: e.py, dir, ts: evs };
+  const tr = t.tr ?? rawByUn.get(t.un)?.tr;
+  if (tr !== undefined) m.tr = tr;
+  splitterSeen.set(e.en, m);
+}
+const splitterMarkers = [...splitterSeen.values()];
+
+// Inserter alt-mode overlay: one entry per inserter that ever had filters
+// active. Same shape as splitterMarkers but the per-event payload carries
+// useFilters / mode / filters[] instead of priority / filter.
+const inserterSeen = new Map();   // en → marker
+let droppedInserterFilters = 0;
+for (const e of manifest.entities) {
+  const t = timing[e.en];
+  if (!t || !t.is || t.is.length === 0) continue;
+  if (inserterSeen.has(e.en)) continue;
+  const evs = t.is;
+  for (const ev of evs) for (const name of (ev.f || [])) {
+    if (!spriteIds.has(`f:${name}`)) droppedInserterFilters++;
+  }
+  const cur = cutByUn.get(t.un);
+  const dir = cur ? (cur.dir ?? 0) : 0;
+  const m = { en: e.en, name: e.name, px: e.px, py: e.py, dir, ts: evs };
+  const tr = t.tr ?? rawByUn.get(t.un)?.tr;
+  if (tr !== undefined) m.tr = tr;
+  inserterSeen.set(e.en, m);
+}
+const inserterMarkers = [...inserterSeen.values()];
 
 const out = {
   runName: RUN,
@@ -246,6 +304,8 @@ const out = {
   durationTick,
   entities,
   recipeMachines,
+  splitterMarkers,
+  inserterMarkers,
   playerTrack,
 };
 
@@ -279,6 +339,8 @@ console.log('entity sprites in run:', entitySpriteCount, '/ recipe sprites in ru
 console.log('with timeRemoved:', entities.filter(e => e.tr !== undefined).length, trFallbackHits ? `(+${trFallbackHits} from raw fallback)` : '');
 console.log('recipe machines:', recipeMachines.length);
 if (droppedRecipeEntries) console.log('dropped recipe-events (sprite missing):', droppedRecipeEntries);
+console.log('splitter markers:', splitterMarkers.length, droppedSplitterFilters ? `(${droppedSplitterFilters} filter-events without sprite)` : '');
+console.log('inserter markers:', inserterMarkers.length, droppedInserterFilters ? `(${droppedInserterFilters} filter-events without sprite)` : '');
 console.log('player track:', playerTrack ? `${playerTrack.name} (${playerTrack.positions.length} samples @ ${playerTrack.period}t)` : 'none');
 console.log('max build tick:', maxTb, '/ duration tick:', durationTick);
 console.log('viewBox:', manifest.viewBox);

@@ -42,13 +42,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
-
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const RECIPES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'recipes.json');
-const RECIPES_GAME_DATA = JSON.parse(fs.readFileSync(RECIPES_PATH, 'utf8'));
-
-const STATUS_KEYS = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
+import { RECIPES_GAME_DATA, emptyRecipeRow, tickToMin } from './lib/common.mjs';
 
 // Items whose gathering is meaningful past the burner phase. Stone and
 // coal mining post-burner-phase is irrelevant to the run analysis (the
@@ -155,7 +149,7 @@ export function buildManualGathering(runDir, xMaxTick, phaseEndTick) {
   for (let i = 0; i < invSnapshots.length; i++) {
     const tick = i * invPeriod;
     if (tick > xMaxTick) break;
-    minutes.push(+(tick / 3600).toFixed(4));
+    minutes.push(tickToMin(tick));
     const snap = invSnapshots[i] ?? {};
 
     // Compute all deltas first so cross-item rules (coal must co-occur
@@ -217,15 +211,17 @@ export function buildManualGathering(runDir, xMaxTick, phaseEndTick) {
   }
 
   const N = minutes.length;
-  const rows = rowConfigs.map(cfgRow => {
-    const cumSeries = cum[cfgRow.recipe] ?? new Array(N).fill(0);
-    const finalCum = totals[cfgRow.recipe] ?? 0;
-    const phaseEndCum = cumAtPhaseEnd[cfgRow.recipe] ?? finalCum;
-    return {
-      ...makeCumRow(cfgRow.key, cfgRow.mode, cfgRow.recipe, cumSeries, finalCum, N),
-      cumAtPhaseEnd: phaseEndCum,
-    };
-  });
+  // Each row is a Recipe shape with only `cum` populated — tracks how the
+  // gathered total grew over time. Phase-end snapshot ships alongside.
+  const rows = rowConfigs.map(cfgRow => ({
+    ...emptyRecipeRow(N),
+    key: cfgRow.key,
+    mode: cfgRow.mode,
+    recipe: cfgRow.recipe,
+    finalCum: totals[cfgRow.recipe] ?? 0,
+    cum: cum[cfgRow.recipe] ?? new Array(N).fill(0),
+    cumAtPhaseEnd: cumAtPhaseEnd[cfgRow.recipe] ?? totals[cfgRow.recipe] ?? 0,
+  }));
 
   return {
     minutes,
@@ -280,34 +276,4 @@ function chestDecreaseInWindow(chests, t0, t1) {
     if (amtBefore > amtAfter) total += amtBefore - amtAfter;
   }
   return total;
-}
-
-// Build a Recipe-shaped row in `cum` mode — cumulative gathered count
-// goes in `cum`, all other fields zero-filled.
-function makeCumRow(key, mode, recipe, cumSeries, finalCum, N) {
-  const zeros = () => new Array(N).fill(0);
-  return {
-    key,
-    mode,
-    recipe,
-    chestCount: 0,
-    finalCum,
-    peakActual: 0,
-    peakPotential: 0,
-    peakBuffer: 0,
-    peakBufferWithInv: 0,
-    actual: zeros(),
-    potential: zeros(),
-    itemsByLoss: [],
-    fluidsByLoss: [],
-    itemLoss: {},
-    fluidLoss: {},
-    statusLoss: Object.fromEntries(STATUS_KEYS.map(k => [k, zeros()])),
-    cum: cumSeries,
-    buffer: zeros(),
-    bufferWithInv: zeros(),
-    bufferLimit: null,
-    peakBufferLimit: 0,
-    showBufferLimit: false,
-  };
 }

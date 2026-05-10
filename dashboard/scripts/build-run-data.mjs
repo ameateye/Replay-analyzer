@@ -17,7 +17,7 @@ import { fileURLToPath } from 'url';
 import { prepareLabSaturationData } from './lab-saturation-prep.mjs';
 import { computePhases, computeRocketLaunchTick } from './phase-boundaries.mjs';
 import { buildEndGameProduction } from './end-game-production-prep.mjs';
-import { buildMixedSegment } from './end-game/mixed-segment.mjs';
+import { buildMixedSegment } from './mixed-segment-prep.mjs';
 import { buildOilPhase } from './oil-phase-prep.mjs';
 import { buildFullBuildPhase } from './full-build-prep.mjs';
 import { buildBurnerPhase } from './burner-phase-prep.mjs';

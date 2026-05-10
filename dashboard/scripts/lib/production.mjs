@@ -17,7 +17,8 @@
 // 0). The empirical-streak path remains as a fallback for any recipe missing
 // from craftTimes.
 
-const LOSS_STATUS_ORDER = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
+import { STATUS_KEYS } from './common.mjs';
+
 const SMOOTH_HALF_WINDOW = 12; // ±12 periods × 5 s ≈ ±1 min
 
 function smooth(values, halfWindow) {
@@ -153,7 +154,7 @@ export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1
   const itemLossPP  = {};
   const fluidLossPP = {};
   const statusLossPP = Object.fromEntries(
-    LOSS_STATUS_ORDER.map(k => [k, new Array(gridTicks.length).fill(0)]),
+    STATUS_KEYS.map(k => [k, new Array(gridTicks.length).fill(0)]),
   );
 
   for (let i = 0; i < gridTicks.length; i++) {
@@ -201,7 +202,7 @@ export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1
   const itemLossSm  = smoothMap(Object.fromEntries(Object.entries(itemLossPP).map(([k, v]) => [k, toMin(v)])), SMOOTH_HALF_WINDOW);
   const fluidLossSm = smoothMap(Object.fromEntries(Object.entries(fluidLossPP).map(([k, v]) => [k, toMin(v)])), SMOOTH_HALF_WINDOW);
   const statusLossSm = smoothMap(
-    Object.fromEntries(LOSS_STATUS_ORDER.map(k => [k, toMin(statusLossPP[k])])),
+    Object.fromEntries(STATUS_KEYS.map(k => [k, toMin(statusLossPP[k])])),
     SMOOTH_HALF_WINDOW,
   );
 
@@ -211,12 +212,12 @@ export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1
     let rawSum = 0;
     for (const k of itemNames)  rawSum += itemLossSm[k][i];
     for (const k of fluidNames) rawSum += fluidLossSm[k][i];
-    for (const k of LOSS_STATUS_ORDER) rawSum += statusLossSm[k][i];
+    for (const k of STATUS_KEYS) rawSum += statusLossSm[k][i];
     const gap = Math.max(0, potentialSm[i] - actualSm[i]);
     const scale = rawSum > 0 ? gap / rawSum : 0;
     for (const k of itemNames)  itemLossSm[k][i] *= scale;
     for (const k of fluidNames) fluidLossSm[k][i] *= scale;
-    for (const k of LOSS_STATUS_ORDER) statusLossSm[k][i] *= scale;
+    for (const k of STATUS_KEYS) statusLossSm[k][i] *= scale;
   }
 
   const totalBy = (m) => Object.fromEntries(Object.entries(m).map(([k, arr]) => [k, arr.reduce((s, v) => s + v, 0)]));
@@ -244,7 +245,7 @@ export function buildProductionSeries(mpFile, recipe, gridTicks, outputCount = 1
     itemLoss:   Object.fromEntries(itemsByLoss.map(k => [k, round2(itemLossSm[k])])),
     fluidLoss:  Object.fromEntries(fluidsByLoss.map(k => [k, round2(fluidLossSm[k])])),
     statusLoss: Object.fromEntries(
-      LOSS_STATUS_ORDER.map(k => [k, round2(statusLossSm[k])]),
+      STATUS_KEYS.map(k => [k, round2(statusLossSm[k])]),
     ),
   };
 }

@@ -15,19 +15,17 @@
 //   - `machineFilter: "before-mixed"` rows compute production against only the
 //     machines built before the Mixed phase boundary — for advanced-circuit,
 //     that gives "the oil-phase RC line, not the dedicated Mixed RC line".
+//   - `components: [...]` stacks multiple recipes (e.g. basic + advanced oil
+//     processing) into a single row whose `actual`/`cum` are element-wise
+//     sums; per-component series are kept under `components` so the renderer
+//     can paint them as a stack in distinct colors.
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
-import { buildRecipeRow, CAPACITY_CFG } from './end-game-production-prep.mjs';
-import { buildBufferSeries, bufferApproachesCapacity } from './end-game/buffer.mjs';
-import { buildProductionSeries } from './end-game/production.mjs';
-
-const STATUS_KEYS = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
-
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const RECIPES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'recipes.json');
-const RECIPES_GAME_DATA = JSON.parse(fs.readFileSync(RECIPES_PATH, 'utf8'));
+import { STATUS_KEYS, RECIPES_GAME_DATA, buildGridTicks, emptyRecipeRow, tickToMin } from './lib/common.mjs';
+import { buildRecipeRow, CAPACITY_CFG } from './lib/recipe-row.mjs';
+import { buildBufferSeries, bufferApproachesCapacity } from './lib/buffer.mjs';
+import { buildProductionSeries } from './lib/production.mjs';
 
 export function buildOilPhase(runDir, rocketLaunchTick, phases) {
   const cfgRaw = RECIPES_GAME_DATA.oilPhaseDisplay;
@@ -41,14 +39,8 @@ export function buildOilPhase(runDir, rocketLaunchTick, phases) {
   const buf = JSON.parse(fs.readFileSync(path.join(runDir, 'bufferAmounts.json'), 'utf8'));
   const inv = JSON.parse(fs.readFileSync(path.join(runDir, 'playerInventory.json'), 'utf8'));
 
-  const period = mp.period;
-  const gridTicks = [];
-  for (let t = 0; t <= rocketLaunchTick; t += period) gridTicks.push(t);
-  const minutes = gridTicks.map(t => +(t / 3600).toFixed(4));
-  const N = gridTicks.length;
-
+  const { gridTicks, minutes, N } = buildGridTicks(mp.period, rocketLaunchTick);
   const mixedStartTick = phases.find(p => p.name === 'Mixed')?.startTick ?? null;
-  const zeros = () => new Array(N).fill(0);
 
   const rows = config.map(cfg => {
     // key + mode are kept in the per-run JSON because they're how the
@@ -63,22 +55,12 @@ export function buildOilPhase(runDir, rocketLaunchTick, phases) {
       const buffer = fluid.buffer.map(v => Math.round(v));
       const showBufferLimit = bufferApproachesCapacity(fluid.buffer, fluid.capacity);
       return {
+        ...emptyRecipeRow(N),
         ...stub,
         recipe: cfg.recipe,
         chestCount: fluid.chestCount,
-        finalCum: 0,
-        peakActual: 0,
-        peakPotential: 0,
         peakBuffer: Math.round(fluid.peak),
         peakBufferWithInv: Math.round(fluid.peak),
-        actual: zeros(),
-        potential: zeros(),
-        itemsByLoss: [],
-        fluidsByLoss: [],
-        itemLoss: {},
-        fluidLoss: {},
-        statusLoss: Object.fromEntries(STATUS_KEYS.map(k => [k, zeros()])),
-        cum: zeros(),
         buffer,
         bufferWithInv: buffer,
         bufferLimit: showBufferLimit ? fluid.capacity.map(v => Math.round(v)) : null,
@@ -100,7 +82,7 @@ export function buildOilPhase(runDir, rocketLaunchTick, phases) {
   });
 
   return {
-    durationMin: +(rocketLaunchTick / 3600).toFixed(4),
+    durationMin: tickToMin(rocketLaunchTick),
     minutes,
     groups,
     rows,
@@ -182,14 +164,12 @@ function buildCombinedRow(mp, gridTicks, stub, componentCfgs, N) {
   const finalCum      = cum[cum.length - 1] ?? 0;
 
   return {
+    ...emptyRecipeRow(N),
     ...stub,
     recipe: components[0].recipe,
-    chestCount: 0,
     finalCum,
     peakActual: +peakActual.toFixed(2),
     peakPotential: +peakPotential.toFixed(2),
-    peakBuffer: 0,
-    peakBufferWithInv: 0,
     actual,
     potential,
     itemsByLoss,
@@ -198,11 +178,6 @@ function buildCombinedRow(mp, gridTicks, stub, componentCfgs, N) {
     fluidLoss,
     statusLoss,
     cum,
-    buffer: new Array(N).fill(0),
-    bufferWithInv: new Array(N).fill(0),
-    bufferLimit: null,
-    peakBufferLimit: 0,
-    showBufferLimit: false,
     components: components.map(c => ({
       recipe: c.recipe,
       actual: c.actual,

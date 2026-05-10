@@ -19,13 +19,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
+import { RECIPES_GAME_DATA, buildGridTicks, emptyRecipeRow, tickToMin } from './lib/common.mjs';
 
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const RECIPES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'recipes.json');
-const RECIPES_GAME_DATA = JSON.parse(fs.readFileSync(RECIPES_PATH, 'utf8'));
-
-const STATUS_KEYS = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
 const POST_PHASE_PAD_TICKS = 5 * 60 * 60;
 
 export function buildBurnerPhase(runDir, rocketLaunchTick, phases) {
@@ -50,13 +45,10 @@ export function buildBurnerPhase(runDir, rocketLaunchTick, phases) {
   const baseEnd = lastRemoved > 0 ? lastRemoved : (burner?.endTick ?? rocketLaunchTick);
   const xMaxTick = Math.min(rocketLaunchTick, baseEnd + POST_PHASE_PAD_TICKS);
 
-  const gridTicks = [];
-  for (let t = 0; t <= xMaxTick; t += period) gridTicks.push(t);
-  const minutes = gridTicks.map(t => +(t / 3600).toFixed(4));
-  const N = gridTicks.length;
+  const { gridTicks, minutes, N } = buildGridTicks(period, xMaxTick);
 
   const rows = rowConfigs.map(cfgRow => {
-    const buffer = new Array(N).fill(0);
+    const count = new Array(N).fill(0);
     for (const m of data.miners) {
       if (m.name !== 'burner-mining-drill') continue;
       if (m.resources?.[0] !== cfgRow.recipe) continue;
@@ -64,57 +56,36 @@ export function buildBurnerPhase(runDir, rocketLaunchTick, phases) {
       const toIdx = m.timeRemoved != null
         ? Math.min(N, Math.ceil(m.timeRemoved / period))
         : N;
-      for (let i = fromIdx; i < toIdx; i++) buffer[i]++;
+      for (let i = fromIdx; i < toIdx; i++) count[i]++;
     }
-    const peak = buffer.reduce((m, v) => Math.max(m, v), 0);
-    const activeSamples = buffer.reduce((n, v) => n + (v > 0 ? 1 : 0), 0);
+    const peak = count.reduce((m, v) => Math.max(m, v), 0);
+    const activeSamples = count.reduce((n, v) => n + (v > 0 ? 1 : 0), 0);
     const runningMin = +((activeSamples * period) / 3600).toFixed(2);
+
+    // Park the count series in buffer + bufferWithInv so ProductionRow's
+    // line-mode renderer reads it without modification. Every other field
+    // is the empty-row default.
     return {
-      ...makeCountRow(cfgRow.key, cfgRow.mode, cfgRow.recipe, buffer, peak, N),
+      ...emptyRecipeRow(N),
+      key: cfgRow.key,
+      mode: cfgRow.mode,
+      recipe: cfgRow.recipe,
+      peakBuffer: peak,
+      peakBufferWithInv: peak,
+      buffer: count,
+      bufferWithInv: count,
       runningMin,
     };
   });
 
   return {
-    durationMin: +(rocketLaunchTick / 3600).toFixed(4),
+    durationMin: tickToMin(rocketLaunchTick),
     startMin: burner?.startMin ?? 0,
     endMin: burner?.endMin ?? null,
-    xMaxMin: +(xMaxTick / 3600).toFixed(4),
+    xMaxMin: tickToMin(xMaxTick),
     xMaxTick,
     minutes,
     groups,
     rows,
-  };
-}
-
-// Build a Recipe-shaped row whose only populated series is the per-tick
-// count, parked in buffer + bufferWithInv so ProductionRow's line-mode
-// renderer reads it without modification. All other Recipe fields are
-// zero-filled so the row stays type-compatible.
-function makeCountRow(key, mode, recipe, count, peak, N) {
-  const zeros = () => new Array(N).fill(0);
-  return {
-    key,
-    mode,
-    recipe,
-    chestCount: 0,
-    finalCum: 0,
-    peakActual: 0,
-    peakPotential: 0,
-    peakBuffer: peak,
-    peakBufferWithInv: peak,
-    actual: zeros(),
-    potential: zeros(),
-    itemsByLoss: [],
-    fluidsByLoss: [],
-    itemLoss: {},
-    fluidLoss: {},
-    statusLoss: Object.fromEntries(STATUS_KEYS.map(k => [k, zeros()])),
-    cum: zeros(),
-    buffer: count,
-    bufferWithInv: count,
-    bufferLimit: null,
-    peakBufferLimit: 0,
-    showBufferLimit: false,
   };
 }

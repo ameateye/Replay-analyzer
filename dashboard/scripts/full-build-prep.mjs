@@ -20,17 +20,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
-import { buildRecipeRow } from './end-game-production-prep.mjs';
-
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const RECIPES_PATH = path.resolve(SCRIPT_DIR, '..', '..', 'game-data', 'recipes.json');
-const RECIPES_GAME_DATA = JSON.parse(fs.readFileSync(RECIPES_PATH, 'utf8'));
+import { RECIPES_GAME_DATA, buildGridTicks, tickToMin } from './lib/common.mjs';
+import { buildRecipeRow } from './lib/recipe-row.mjs';
 
 export function buildFullBuildPhase(runDir, rocketLaunchTick, phases) {
   const cfgRaw = RECIPES_GAME_DATA.fullBuildDisplay;
   if (!cfgRaw) return null;
-  const groups = cfgRaw.groups ?? [];
+  // groups (cfgRaw.groups) are read at runtime directly from
+  // gameData.recipes.fullBuildDisplay — not echoed into the per-run JSON.
   const config = cfgRaw.rows ?? [];
   if (config.length === 0) return null;
 
@@ -42,10 +39,7 @@ export function buildFullBuildPhase(runDir, rocketLaunchTick, phases) {
   const buf = JSON.parse(fs.readFileSync(path.join(runDir, 'bufferAmounts.json'), 'utf8'));
   const inv = JSON.parse(fs.readFileSync(path.join(runDir, 'playerInventory.json'), 'utf8'));
 
-  const period = mp.period;
-  const gridTicks = [];
-  for (let t = 0; t <= rocketLaunchTick; t += period) gridTicks.push(t);
-  const minutes = gridTicks.map(t => +(t / 3600).toFixed(4));
+  const { gridTicks, minutes } = buildGridTicks(mp.period, rocketLaunchTick);
 
   const rows = config.map(cfg => {
     // key + mode kept; the runtime widget pulls label / color / group from
@@ -54,7 +48,7 @@ export function buildFullBuildPhase(runDir, rocketLaunchTick, phases) {
     const stub = { key: cfg.key, mode: cfg.mode };
 
     const machineFilter = cfg.machineFilter === 'after-full-build-start'
-      ? (m => m.timeBuilt >= fullBuildStartTick - period)
+      ? (m => m.timeBuilt >= fullBuildStartTick - mp.period)
       : null;
 
     const row = buildRecipeRow(mp, buf, inv, cfg.recipe, gridTicks, machineFilter);
@@ -72,11 +66,10 @@ export function buildFullBuildPhase(runDir, rocketLaunchTick, phases) {
   });
 
   return {
-    durationMin: +(rocketLaunchTick / 3600).toFixed(4),
-    startMin: +(fullBuildStartTick / 3600).toFixed(4),
-    endMin: fullBuild.endTick != null ? +(fullBuild.endTick / 3600).toFixed(4) : null,
+    durationMin: tickToMin(rocketLaunchTick),
+    startMin: tickToMin(fullBuildStartTick),
+    endMin: fullBuild.endTick != null ? tickToMin(fullBuild.endTick) : null,
     minutes,
-    groups,
     rows,
   };
 }

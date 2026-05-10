@@ -17,7 +17,7 @@
 //   <RUN>.timing.json     — { [entityNumber]: { tb, tr?, un, rs? } }   (rs = recipe timeline)
 //
 // Outputs:
-//   dashboard/public/map-data/<RUN>.map.json
+//   dashboard/src/data/<RUN>.map.json
 //       — { viewBox, durationTick, entities (renderables, sorted globally by
 //           (L, py, px)), recipeMachines (one per entity-with-rs), playerTrack }
 //   game-data/map-sprites.json
@@ -50,7 +50,7 @@ const manifestPath = resolve(ROOT, 'tools', 'output', `${RUN}.manifest.json`);
 const timingPath   = resolve(ROOT, 'tools', 'output', `${RUN}.timing.json`);
 const rocketPath   = resolve(ROOT, 'extracted-data', RUN, 'rocketLaunchTime.json');
 const playerPath   = resolve(ROOT, 'extracted-data', RUN, 'playerPosition.json');
-const outDir       = resolve(ROOT, 'dashboard', 'public', 'map-data');
+const outDir       = resolve(ROOT, 'dashboard', 'src', 'data');
 const outPath      = resolve(outDir, `${RUN}.map.json`);
 const spritePath   = resolve(ROOT, 'game-data', 'map-sprites.json');
 

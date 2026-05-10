@@ -111,8 +111,11 @@ fs.writeFileSync(outPath, JSON.stringify(output));
 // Regenerate the run-index. Lists every <name>.json in src/data/ ordered by
 // most-recently-built first, so the freshly-built run becomes the default
 // without any extra step. App.tsx exposes a picker over `runs[]`.
+// Only the per-run summary JSONs participate in the bundle. Per-run map data
+// (`<run>.map.json`) is fetched at runtime via Vite ?url imports — see
+// `maps.ts` — and must be excluded here.
 const allJsons = fs.readdirSync(outDir)
-  .filter(n => n.endsWith('.json'))
+  .filter(n => n.endsWith('.json') && !n.endsWith('.map.json'))
   .map(n => ({ name: n, mtime: fs.statSync(path.join(outDir, n)).mtimeMs }))
   .sort((a, b) => b.mtime - a.mtime)
   .map(e => e.name.replace(/\.json$/, ''));

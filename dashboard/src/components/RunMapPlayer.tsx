@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime } from '../theme';
+import { mapUrlFor } from '../data/maps';
 import './RunMapPlayer.css';
 
 // Player for the FBSR-rendered base map. Map data is fetched as a static
@@ -120,7 +121,8 @@ export function RunMapPlayer({ runName }: { runName: string }) {
   useEffect(() => {
     let cancelled = false;
     setData(null); setSprites(null); setErr(null);
-    const mapUrl = `${import.meta.env.BASE_URL}map-data/${runName}.map.json`;
+    const mapUrl = mapUrlFor(runName);
+    if (!mapUrl) { setErr(`no map data for ${runName}`); return; }
     const spritesUrl = `${import.meta.env.BASE_URL}game-data/map-sprites/${runName}.json`;
     Promise.all([
       fetch(mapUrl).then(r => { if (!r.ok) throw new Error(`${r.status} ${mapUrl}`); return r.json(); }),

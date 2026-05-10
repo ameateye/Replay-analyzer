@@ -94,32 +94,38 @@ function foldDirection(e, cutoff) {
   return { dir, bgt };
 }
 
+// Raw layout / miners are read once and reused both for the sprite-rebind
+// patch below and for the timeRemoved fallback during the timing join. The
+// timing sidecar produced by older fbsr-prep versions doesn't carry tr for
+// entityLayout-derived records (belts/inserters/splitters/undergrounds), so
+// we look it up here as authoritative truth — same source the data layer
+// captured it from.
+const rawByUn = new Map();   // unitNumber → { dir?, bgt?, tr? }
+const cutByUn = new Map();   // unitNumber → { dir, bgt }
+try {
+  const layout = JSON.parse(readFileSync(layoutPath, 'utf-8'));
+  for (const e of layout.entities) {
+    rawByUn.set(e.unitNumber, { dir: e.direction ?? 0, bgt: e.beltToGroundType, tr: e.timeRemoved });
+    if (durationTick > 0) cutByUn.set(e.unitNumber, foldDirection(e, durationTick));
+  }
+} catch {
+  // entityLayout missing — leave the manifest as-is.
+}
+try {
+  const miners = JSON.parse(readFileSync(minerPath, 'utf-8'));
+  for (const e of miners.miners ?? []) {
+    rawByUn.set(e.unitNumber, { dir: e.direction ?? 0, tr: e.timeRemoved });
+    if (durationTick > 0) cutByUn.set(e.unitNumber, foldDirection(e, durationTick));
+  }
+} catch {
+  // minerActivity missing — drills/pumpjack stay on their manifest sids.
+}
+
+// entity_number → unitNumber via the timing sidecar.
+const enToUn = new Map();
+for (const [en, t] of Object.entries(timing)) enToUn.set(+en, t.un);
+
 if (durationTick > 0) {
-  const rawByUn = new Map();   // unitNumber → build-time { dir, bgt }
-  const cutByUn = new Map();   // unitNumber → cutoff      { dir, bgt }
-
-  try {
-    const layout = JSON.parse(readFileSync(layoutPath, 'utf-8'));
-    for (const e of layout.entities) {
-      rawByUn.set(e.unitNumber, { dir: e.direction ?? 0, bgt: e.beltToGroundType });
-      cutByUn.set(e.unitNumber, foldDirection(e, durationTick));
-    }
-  } catch {
-    // entityLayout missing — leave the manifest as-is.
-  }
-  try {
-    const miners = JSON.parse(readFileSync(minerPath, 'utf-8'));
-    for (const e of miners.miners ?? []) {
-      rawByUn.set(e.unitNumber, { dir: e.direction ?? 0 });
-      cutByUn.set(e.unitNumber, foldDirection(e, durationTick));
-    }
-  } catch {
-    // minerActivity missing — drills/pumpjack stay on their manifest sids.
-  }
-
-  // entity_number → unitNumber via the timing sidecar.
-  const enToUn = new Map();
-  for (const [en, t] of Object.entries(timing)) enToUn.set(+en, t.un);
 
   // Lookup table built from the manifest's CURRENT sids, keyed on RAW direction.
   const lookup = new Map();
@@ -161,12 +167,22 @@ if (durationTick > 0) {
 // HIGHER_OBJECT_UNDER (53) below indicators at INSERTER_INDICATORS (58),
 // with southern-then-eastern y-x sort within a layer (matches Factorio's
 // natural 2D depth cue).
+// Fall back to raw entityLayout/minerActivity for timeRemoved when the
+// timing sidecar is missing it (older fbsr-prep didn't carry tr for
+// entityLayout-derived records — belts/inserters/splitters/undergrounds —
+// causing replaced belts to stay rendered forever, e.g. two belts on the
+// same tile if one was rotated by remove+rebuild).
+let trFallbackHits = 0;
 const entities = manifest.entities
   .map(e => {
     const t = timing[e.en];
     if (!t) return null;
     const out = { ...e, tb: t.tb };
     if (t.tr !== undefined) out.tr = t.tr;
+    else {
+      const raw = rawByUn.get(t.un);
+      if (raw && raw.tr !== undefined) { out.tr = raw.tr; trFallbackHits++; }
+    }
     return out;
   })
   .filter(e => e && e.tb > 0)
@@ -260,7 +276,7 @@ console.log('wrote', outPath);
 console.log('wrote', spritePath, `(atlas: ${Object.keys(mergedSprites).length} sprites, +${addedCount} new from this run)`);
 console.log('renderables:', entities.length, '/ across', layerCount, 'FBSR layers');
 console.log('entity sprites in run:', entitySpriteCount, '/ recipe sprites in run:', recipeSpriteCount);
-console.log('with timeRemoved:', entities.filter(e => e.tr !== undefined).length);
+console.log('with timeRemoved:', entities.filter(e => e.tr !== undefined).length, trFallbackHits ? `(+${trFallbackHits} from raw fallback)` : '');
 console.log('recipe machines:', recipeMachines.length);
 if (droppedRecipeEntries) console.log('dropped recipe-events (sprite missing):', droppedRecipeEntries);
 console.log('player track:', playerTrack ? `${playerTrack.name} (${playerTrack.positions.length} samples @ ${playerTrack.period}t)` : 'none');

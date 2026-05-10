@@ -89,6 +89,7 @@ function main() {
       position: { x: e.location.x, y: e.location.y },
       direction,
       timeBuilt: e.timeBuilt ?? 0,
+      timeRemoved: e.timeRemoved,
       unitNumber: e.unitNumber,
     };
     if (e.name.endsWith('underground-belt')) rec.type = beltToGround ?? 'input';

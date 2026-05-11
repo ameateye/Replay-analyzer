@@ -16,10 +16,10 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { prepareLabSaturationData } from './lab-saturation-prep.mjs';
 import { computePhases, computeRocketLaunchTick } from './phase-boundaries.mjs';
-import { buildBurnerPhase } from './burner-phase-prep.mjs';
 import { buildManualGathering } from './manual-gathering-prep.mjs';
 import { buildProductionCube } from './production-cube-prep.mjs';
 import { buildStocks } from './stocks-prep.mjs';
+import { buildMiners } from './miners-prep.mjs';
 import { buildMapData, mapPrepInputsReady } from './map-prep.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -46,7 +46,7 @@ const rocketLaunchTick = computeRocketLaunchTick(runDir);
 const rocketLaunchMin = rocketLaunchTick / 3600;
 
 // Clip everything to rocket launch (consistent with lab-saturation-d3.ts).
-const points = lab.points
+const perMinute = lab.points
   .filter(p => p.minute <= rocketLaunchMin)
   .map(p => ({
     minute: +p.minute.toFixed(4),
@@ -55,14 +55,14 @@ const points = lab.points
     missingByPack: p.missingByPack,
   }));
 
-const idleRects = lab.idleRects
+const idleBands = lab.idleRects
   .filter(r => r.startMin < rocketLaunchMin)
   .map(r => ({
     startMin: +r.startMin.toFixed(4),
     widthMin: +(Math.min(r.startMin + r.widthMin, rocketLaunchMin) - r.startMin).toFixed(4),
   }));
 
-const researchIntervals = lab.researchIntervals
+const research = lab.researchIntervals
   .filter(iv => iv.startMin < rocketLaunchMin)
   .map(iv => ({
     name: iv.name,
@@ -70,13 +70,28 @@ const researchIntervals = lab.researchIntervals
     endMin: +Math.min(iv.endMin, rocketLaunchMin).toFixed(4),
   }));
 
-const peakActiveLabs = points.reduce((m, p) => Math.max(m, p.active ?? 0), 0);
-const peakLabs = points.reduce((m, p) => Math.max(m, p.total ?? 0), 0);
+const peakActiveLabs = perMinute.reduce((m, p) => Math.max(m, p.active ?? 0), 0);
+const peakLabs = perMinute.reduce((m, p) => Math.max(m, p.total ?? 0), 0);
 
-const burnerPhase = buildBurnerPhase(runDir, rocketLaunchTick, phases);
+const miners = buildMiners(runDir);
 const burnerEndTick = phases.find(p => p.name === 'Burner')?.endTick ?? null;
-const manualGathering = burnerPhase
-  ? buildManualGathering(runDir, burnerPhase.xMaxTick, burnerEndTick)
+
+// Manual gathering's x-axis follows the burner-phase widget, which now
+// derives its bound at render time from `miners`. Reproduce the same
+// heuristic here so the build-time prep sees the same window.
+const POST_PHASE_PAD_TICKS = 5 * 60 * 60;
+let burnerWidgetXMaxTick = null;
+if (miners) {
+  let lastRemoved = 0;
+  for (const m of miners.miners) {
+    if (m.name !== 'burner-mining-drill') continue;
+    if (m.timeRemoved != null && m.timeRemoved > lastRemoved) lastRemoved = m.timeRemoved;
+  }
+  const baseEnd = lastRemoved > 0 ? lastRemoved : (burnerEndTick ?? rocketLaunchTick);
+  burnerWidgetXMaxTick = Math.min(rocketLaunchTick, baseEnd + POST_PHASE_PAD_TICKS);
+}
+const manualGathering = burnerWidgetXMaxTick != null
+  ? buildManualGathering(runDir, burnerWidgetXMaxTick, burnerEndTick)
   : null;
 
 // Per-run-data redesign step 4 complete: the four widget-shaped preps
@@ -90,14 +105,15 @@ const output = {
   runName,
   durationTicks: rocketLaunchTick,
   durationMin: +rocketLaunchMin.toFixed(4),
-  peakActiveLabs,
-  peakLabs,
-  packsUsed: lab.packsUsed,
-  points,
-  idleRects,
-  researchIntervals,
+  summary: {
+    peakLabs,
+    peakActiveLabs,
+    packsUsed: lab.packsUsed,
+  },
   phases,
-  burnerPhase,
+  labs: { perMinute, idleBands },
+  research,
+  miners,
   manualGathering,
   production,
   stocks,
@@ -133,12 +149,15 @@ fs.writeFileSync(
 );
 
 const sizeKB = (fs.statSync(outPath).size / 1024).toFixed(1);
-console.log(`  ${points.length} points, ${idleRects.length} idle bands, ${researchIntervals.length} research intervals`);
+console.log(`  labs: ${perMinute.length} samples, ${idleBands.length} idle bands · research: ${research.length} intervals`);
 console.log(`  peak active=${peakActiveLabs} peak labs=${peakLabs} duration=${rocketLaunchMin.toFixed(2)} min`);
-if (burnerPhase) {
-  console.log(`  burner xMax=${burnerPhase.xMaxMin.toFixed(1)} min · rows: ${burnerPhase.rows.map(r => `${r.key} peak=${r.peakBufferWithInv} run=${r.runningMin}m`).join(', ')}`);
+if (miners) {
+  const byName = {};
+  for (const m of miners.miners) byName[m.name] = (byName[m.name] ?? 0) + 1;
+  const tally = Object.entries(byName).map(([k, n]) => `${k}×${n}`).join(', ');
+  console.log(`  miners: ${miners.miners.length} entries (${tally})`);
 } else {
-  console.log('  burner: minerActivity.json missing — phase widget skipped');
+  console.log('  miners: minerActivity.json missing — burner widget will fall back');
 }
 if (manualGathering) {
   console.log(`  manual gathering: ${manualGathering.rows.map(r => `${r.recipe}=${r.finalCum}`).join(', ')}`);
@@ -166,7 +185,11 @@ if (manualGathering) {
 if (mapPrepInputsReady(runName)) {
   try {
     console.log(`  map-prep: running for ${runName} (FBSR output ready)`);
-    buildMapData(runName, { phases });
+    // Both `phases` and `miners` come from this chart-side build so the
+    // map pipeline shares a single source of truth for those datasets
+    // (avoids drift between map-prep's raw minerActivity read and the
+    // dashboard's lifted `miners` view).
+    buildMapData(runName, { phases, miners });
   } catch (err) {
     console.warn(`  map-prep: failed (${err?.message ?? err}) — skipping`);
   }

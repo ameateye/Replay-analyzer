@@ -58,7 +58,7 @@ export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable
   const gameData = useGameData();
 
   const researchIntervals = useMemo(
-    () => augmentResearchIntervals(run.researchIntervals, gameData),
+    () => augmentResearchIntervals(run.research, gameData),
     [run, gameData],
   );
 
@@ -68,8 +68,8 @@ export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable
   );
 
   const peakLabs = useMemo(
-    () => run.points.reduce((m, p) => Math.max(m, p.total), 0),
-    [run.points],
+    () => run.labs.perMinute.reduce((m, p) => Math.max(m, p.total), 0),
+    [run.labs.perMinute],
   );
   const yMax = niceCeiling(peakLabs * 1.15);
   const yScale = useMemo(
@@ -77,7 +77,7 @@ export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable
     [yMax],
   );
 
-  const ribbonH = getRibbonHeight(researchIntervals, xScale, run.packsUsed.length);
+  const ribbonH = getRibbonHeight(researchIntervals, xScale, run.summary.packsUsed.length);
 
   const ribbonTop = MARGIN_TOP;
   const plotTop = ribbonTop + ribbonH + RIBBON_TO_PLOT_GAP;
@@ -104,7 +104,7 @@ export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable
               innerW={innerW}
               xScale={xScale}
               researchIntervals={researchIntervals}
-              packsUsed={run.packsUsed}
+              packsUsed={run.summary.packsUsed}
               containerRef={containerRef}
               setTooltip={setTooltip}
             />
@@ -116,9 +116,9 @@ export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable
               innerH={PLOT_H}
               xScale={xScale}
               yScale={yScale}
-              points={run.points}
-              idleRects={run.idleRects}
-              packsUsed={run.packsUsed}
+              points={run.labs.perMinute}
+              idleRects={run.labs.idleBands}
+              packsUsed={run.summary.packsUsed}
               phases={run.phases}
               researchIntervals={researchIntervals}
               containerRef={containerRef}
@@ -168,7 +168,7 @@ export function RunOverview({ run, activePhase, onSelectPhase, isPhaseSelectable
           </Group>
 
           <Group left={W - MARGIN_RIGHT + 18} top={plotTop}>
-            <Legend packsUsed={run.packsUsed} />
+            <Legend packsUsed={run.summary.packsUsed} />
           </Group>
         </svg>
         <ChartTooltip state={tooltip} />

@@ -17,10 +17,12 @@ import type {
   StatusKey,
   StocksDataset,
   StocksSource,
+  MinersDataset,
 } from './runDatasets';
 import { STATUS_KEYS } from './runDatasets';
 import { projectProduction } from './projectProduction';
 import { projectStocks, bufferApproachesCapacity, type CapacityCfg } from './projectStocks';
+import { projectMinerCounts } from './projectMiners';
 
 export type { CapacityCfg } from './projectStocks';
 
@@ -229,6 +231,47 @@ export function buildCombinedRecipeRow(
       peakActual: +slice.peakActual.toFixed(2),
       finalCum: slice.finalCum,
     })),
+  };
+}
+
+// Miner-count row: count-mode rendering of a per-resource miner count
+// series, sourced from the lifted miners dataset. Parks the count series
+// in buffer + bufferWithInv so ProductionRow's count-mode renderer reads
+// it the same way the old burner-phase-prep emitted it. `runningMin` is
+// the total minutes count > 0 — surfaced via headlineOverride by the
+// caller.
+export type MinerRow = RecipeRow & { runningMin: number };
+
+export function buildMinerCountRow(
+  miners: MinersDataset,
+  opts: { name: string; resource: string; gridTicks: number[]; period: number },
+): MinerRow {
+  const { name, resource, gridTicks, period } = opts;
+  const N = gridTicks.length;
+  const { count, peak, runningMin } = projectMinerCounts(miners.miners, { name, resource, gridTicks, period });
+  const zeros = () => new Array(N).fill(0);
+  return {
+    recipe: resource,
+    chestCount: 0,
+    finalCum: 0,
+    peakActual: 0,
+    peakPotential: 0,
+    peakBuffer: peak,
+    peakBufferWithInv: peak,
+    actual: zeros(),
+    potential: zeros(),
+    itemsByLoss: [],
+    fluidsByLoss: [],
+    itemLoss: {},
+    fluidLoss: {},
+    statusLoss: Object.fromEntries(STATUS_KEYS.map(k => [k, zeros()])) as Record<StatusKey, number[]>,
+    cum: zeros(),
+    buffer: count,
+    bufferWithInv: count,
+    bufferLimit: null,
+    peakBufferLimit: 0,
+    showBufferLimit: false,
+    runningMin,
   };
 }
 

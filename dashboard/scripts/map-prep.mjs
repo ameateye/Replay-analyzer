@@ -47,6 +47,12 @@
 // its timeline to phase ends. Standalone CLI invocations don't pass them
 // (the chart-side computePhases isn't run); the player falls back to a
 // linear durationTick scrubber.
+//
+// Miners (optional): the chart-side build-run-data also passes the lifted
+// `miners` dataset so map-prep can reuse the same per-run source-of-truth
+// for end-of-run direction folding (single read, single shape). When
+// missing (e.g. CLI invocation without a chart-side build) map-prep falls
+// back to reading raw minerActivity.json directly.
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -70,7 +76,10 @@ export function mapPrepInputsReady(runName) {
 //            snap its timeline to phase boundaries. When null the map.json
 //            omits the `phases` field and the player falls back to the
 //            linear durationTick range.
-export function buildMapData(runName, { phases = null } = {}) {
+//   miners — optional `{ miners: [...] }` (typically `run.miners` from the
+//            chart-side build). When present, map-prep uses it for end-of-
+//            run direction folding instead of re-reading minerActivity.json.
+export function buildMapData(runName, { phases = null, miners = null } = {}) {
   const RUN = runName;
   const manifestPath = resolve(ROOT, 'tools', 'output', `${RUN}.manifest.json`);
   const timingPath   = resolve(ROOT, 'tools', 'output', `${RUN}.timing.json`);
@@ -114,14 +123,25 @@ export function buildMapData(runName, { phases = null } = {}) {
   } catch {
     // entityLayout missing — leave the manifest as-is.
   }
-  try {
-    const miners = JSON.parse(readFileSync(minerPath, 'utf-8'));
-    for (const e of miners.miners ?? []) {
+  // Prefer the lifted `miners` payload (passed in by build-run-data so both
+  // pipelines share one source of truth). Fall back to reading raw
+  // minerActivity.json so the standalone CLI keeps working.
+  let minerList = null;
+  if (miners?.miners) {
+    minerList = miners.miners;
+  } else {
+    try {
+      const raw = JSON.parse(readFileSync(minerPath, 'utf-8'));
+      minerList = raw.miners ?? null;
+    } catch {
+      // minerActivity missing — drills/pumpjack stay on their manifest sids.
+    }
+  }
+  if (minerList) {
+    for (const e of minerList) {
       rawByUn.set(e.unitNumber, { dir: e.direction ?? 0, tr: e.timeRemoved });
       if (durationTick > 0) cutByUn.set(e.unitNumber, foldDirection(e, durationTick));
     }
-  } catch {
-    // minerActivity missing — drills/pumpjack stay on their manifest sids.
   }
 
   // entity_number → unitNumber via the timing sidecar.

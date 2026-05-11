@@ -12,8 +12,8 @@ import { useGameData } from '../server/GameDataContext';
 import { COLORS, FONT, fmtTime } from '../theme';
 import { containerXY, TooltipRow, type TooltipState } from './Tooltip';
 
-type Point = Run['points'][number];
-type IdleRect = Run['idleRects'][number];
+type Point = Run['labs']['perMinute'][number];
+type IdleRect = Run['labs']['idleBands'][number];
 type Phase = Run['phases'][number];
 
 type Props = {

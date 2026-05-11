@@ -1,7 +1,10 @@
 # Concept: Per-Run Data Redesign
 
-**Status:** Implemented (2026-05-11). Four of the six widget-shaped preps (`end-game-production-prep`, `mixed-segment-prep`, `oil-phase-prep`, `full-build-prep`) are deleted and their widgets project from the new `production` cube + `stocks` dataset at render time. Three preps were intentionally retained: `burner-phase-prep` (uses `minerActivity.json`, a different data source than the cube), `manual-gathering-prep` (depends on the burner phase), and `front-side-prep` (kept as-is per scoping; can be folded in later when a region-axis is added to the cube).
-**Date:** 2026-05-11
+**Status:** Implemented through three rounds.
+1. **2026-05-11** — Four of the six widget-shaped preps (`end-game-production-prep`, `mixed-segment-prep`, `oil-phase-prep`, `full-build-prep`) deleted and their widgets project from the new `production` cube + `stocks` dataset at render time.
+2. **2026-05-12** — Labs migration (top-level `points`/`idleRects`/`researchIntervals`/`peakLabs`/… → nested `labs`/`research`/`summary`), `miners` raw dataset added, `burner-phase-prep` deleted (burner widget projects from `miners` at render time), and the map pipeline now shares `miners` with the chart-side build (single source of truth). `manual-gathering-prep` and `front-side-prep` still retained as widget-shaped (heuristic-heavy / region-axis pending).
+
+**Date:** 2026-05-12
 **Context:** Restructure `dashboard/src/data/<run>.json` from a bag of widget-specific slices into a small set of named datasets that widgets project from at render time.
 
 ---

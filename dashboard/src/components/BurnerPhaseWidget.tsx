@@ -2,12 +2,15 @@
 // burner-phase-scoped x-axis (0 → last burner removal + 5 min):
 //
 //   1. Burner miners — one ProductionRow per resource (count mode).
-//      Right-margin headline reports "X burners running for Y minutes"
-//      via a headlineOverride.
+//      Per-resource count series are projected from the lifted `miners`
+//      dataset at render time. Right-margin headline reports
+//      "X burners running for Y minutes" via a headlineOverride.
 //
 //   2. Manual gathering — wood / stone / coal cumulatively gathered by
 //      the player from chopping trees and mining rocks. Pickups from
 //      chests / miners are filtered out in prep (proximity heuristic).
+//      Still a build-time computed dataset (heuristic-heavy + reads raw
+//      files the dashboard doesn't ship).
 //
 // Display meta (label / color) for both sections lives in recipes.json
 // under burnerPhaseDisplay / manualGatheringDisplay; the widget looks
@@ -24,6 +27,9 @@ import { COLORS, FONT, fmtTimeNoSec } from '../theme';
 import { ProductionRow, type ProductionMode, type Recipe } from './ProductionWidget';
 import { ChartTooltip, type TooltipState } from './Tooltip';
 import { useGameData } from '../server/GameDataContext';
+import type { MinersDataset } from '../lib/runDatasets';
+import { burnerPhaseXMaxTick } from '../lib/projectMiners';
+import { buildMinerCountRow } from '../lib/recipeRow';
 import './EndGameWidgets.css';
 
 const W = 1500;
@@ -41,35 +47,74 @@ type RowData = Recipe & {
   cumAtPhaseEnd?: number;
 };
 
-type BurnerPhaseData = {
-  durationMin: number;
-  startMin: number;
-  endMin: number | null;
-  xMaxMin: number;
-  minutes: number[];
-  rows: RowData[];
-};
-
 type ManualGatheringData = {
   minutes: number[];
   rows: RowData[];
 };
 
+// Period the burner widget renders its count series on. Picked to match
+// the data collector's native miner-sample period (5 s) so charts read
+// at the same resolution as the production cube.
+const BURNER_PERIOD_TICKS = 300;
+
 export function BurnerPhaseWidget({ run }: { run: Run }) {
-  const bp = run.burnerPhase as BurnerPhaseData | null | undefined;
+  const miners = (run as Run & { miners?: MinersDataset | null }).miners;
   const mg = (run as Run & { manualGathering?: ManualGatheringData | null }).manualGathering;
   const gameData = useGameData();
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
 
+  const burnerPhase = run.phases.find(p => p.name === 'Burner');
+  const burnerPhaseEndTick = burnerPhase?.endTick ?? null;
+  const burnerStartMin = burnerPhase?.startMin ?? 0;
+  const burnerEndMin = burnerPhase?.endMin ?? null;
+
   const innerW = W - MARGIN_LEFT - MARGIN_RIGHT;
-  const xMax = bp?.xMaxMin ?? run.durationMin;
+
+  const xMaxTick = useMemo(() => {
+    if (!miners) return null;
+    return burnerPhaseXMaxTick(miners, {
+      rocketLaunchTick: run.durationTicks,
+      burnerPhaseEndTick,
+    });
+  }, [miners, run.durationTicks, burnerPhaseEndTick]);
+  const xMaxMin = xMaxTick != null ? +(xMaxTick / 3600).toFixed(4) : run.durationMin;
+
   const xScale = useMemo(
-    () => scaleLinear<number>({ domain: [0, xMax], range: [0, innerW] }),
-    [xMax, innerW],
+    () => scaleLinear<number>({ domain: [0, xMaxMin], range: [0, innerW] }),
+    [xMaxMin, innerW],
   );
 
-  if (!bp) {
+  const burnerCfg = gameData.recipes.burnerPhaseDisplay;
+  const burnerRowConfigs = burnerCfg?.rows ?? [];
+
+  const { minutes, burnerRows } = useMemo(() => {
+    if (!miners || xMaxTick == null) {
+      return { minutes: [] as number[], burnerRows: [] as { row: RowData; display: { label: string; color: string } }[] };
+    }
+    const gridTicks: number[] = [];
+    for (let t = 0; t <= xMaxTick; t += BURNER_PERIOD_TICKS) gridTicks.push(t);
+    const mins = gridTicks.map(t => +(t / 3600).toFixed(4));
+    const rows: { row: RowData; display: { label: string; color: string } }[] = [];
+    for (const cfg of burnerRowConfigs) {
+      const row = buildMinerCountRow(miners, {
+        name: 'burner-mining-drill',
+        resource: cfg.recipe,
+        gridTicks,
+        period: BURNER_PERIOD_TICKS,
+      });
+      const rowData: RowData = {
+        ...row,
+        key: cfg.key,
+        mode: cfg.mode as ProductionMode,
+        recipe: cfg.recipe,
+      };
+      rows.push({ row: rowData, display: { label: cfg.label, color: cfg.color } });
+    }
+    return { minutes: mins, burnerRows: rows };
+  }, [miners, xMaxTick, burnerRowConfigs]);
+
+  if (!miners) {
     return (
       <section className="end-game">
         <header className="end-game__header">
@@ -85,18 +130,10 @@ export function BurnerPhaseWidget({ run }: { run: Run }) {
     );
   }
 
-  const burnerCfg = gameData.recipes.burnerPhaseDisplay;
-  const burnerDisplayByKey = new Map(burnerCfg?.rows?.map(r => [r.key, r]) ?? []);
-  const burnerRows = bp.rows
-    .map(r => ({ row: r, display: burnerDisplayByKey.get(r.key) }))
-    .filter((entry): entry is { row: RowData; display: NonNullable<typeof entry.display> } =>
-      entry.display != null,
-    );
-
-  const rangeText = bp.endMin != null
-    ? `${fmtTimeNoSec(bp.startMin)}–${fmtTimeNoSec(bp.endMin)}`
-    : `from ${fmtTimeNoSec(bp.startMin)}`;
-  const burnerEndX = bp.endMin != null ? xScale(bp.endMin) : null;
+  const rangeText = burnerEndMin != null
+    ? `${fmtTimeNoSec(burnerStartMin)}–${fmtTimeNoSec(burnerEndMin)}`
+    : `from ${fmtTimeNoSec(burnerStartMin)}`;
+  const burnerEndX = burnerEndMin != null ? xScale(burnerEndMin) : null;
 
   return (
     <>
@@ -112,7 +149,7 @@ export function BurnerPhaseWidget({ run }: { run: Run }) {
         <div className="end-game__chart" ref={containerRef}>
           {renderRowSection({
             rows: burnerRows,
-            minutes: bp.minutes,
+            minutes,
             xScale,
             innerW,
             containerRef,

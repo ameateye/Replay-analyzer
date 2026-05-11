@@ -61,6 +61,26 @@ export type StocksDataset = {
   groups: StocksGroup[];
 };
 
+// ---------- Miners ----------
+
+// Lifted, statuses-stripped miner list — see dashboard/scripts/miners-prep.mjs.
+// Each entry preserves the raw minerActivity field shape (with `statuses`
+// dropped) so both render-time projection (burner widget) and the map
+// pipeline's direction folding can share one source of truth.
+export type Miner = {
+  name: string;
+  unitNumber: number;
+  location: { x: number; y: number };
+  direction: number;
+  timeBuilt: number;
+  resources: string[];
+  timeRemoved?: number;
+};
+
+export type MinersDataset = {
+  miners: Miner[];
+};
+
 // ---------- Common ----------
 
 // STATUS_KEYS mirror the data-collector enum and the build-time STATUS_KEYS

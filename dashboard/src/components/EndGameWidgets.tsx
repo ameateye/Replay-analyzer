@@ -69,9 +69,16 @@ export function EndGameWidgets({ run }: { run: Run }) {
   const minutes = useMemo(() => gridTicks.map(t => +(t / 3600).toFixed(4)), [gridTicks]);
 
   const recipes = useMemo(
-    () => gameData.recipes.endGameDisplay.map(({ recipe }) =>
-      buildRecipeRow(cube, stocks, { recipe, gridTicks }),
-    ),
+    () => {
+      const capacityCfg = {
+        chestSlots: gameData.recipes.chestSlots,
+        stackSizes: gameData.recipes.stackSizes,
+        tankCapacity: gameData.recipes.tankCapacity,
+      };
+      return gameData.recipes.endGameDisplay.map(({ recipe }) =>
+        buildRecipeRow(cube, stocks, { recipe, gridTicks, capacityCfg }),
+      );
+    },
     [cube, stocks, gameData, gridTicks],
   );
 

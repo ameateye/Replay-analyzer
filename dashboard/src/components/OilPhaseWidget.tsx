@@ -61,12 +61,17 @@ export function OilPhaseWidget({ run }: { run: Run }) {
 
   const allBuilt = useMemo<BuiltRow[]>(() => {
     const cfgRows = gameData.recipes.oilPhaseDisplay?.rows ?? [];
+    const capacityCfg = {
+      chestSlots: gameData.recipes.chestSlots,
+      stackSizes: gameData.recipes.stackSizes,
+      tankCapacity: gameData.recipes.tankCapacity,
+    };
     return cfgRows.map(display => {
       const buildPhases = display.machineFilter === 'before-mixed' ? beforeMixed : null;
 
       let row;
       if (display.mode === 'fluid-buffer') {
-        row = buildFluidBufferRow(stocks, { item: display.recipe, gridTicks });
+        row = buildFluidBufferRow(stocks, { item: display.recipe, gridTicks, capacityCfg });
       } else if (display.components && display.components.length > 0) {
         row = buildCombinedRecipeRow(cube, {
           rowRecipe: display.components[0].recipe,
@@ -81,6 +86,7 @@ export function OilPhaseWidget({ run }: { run: Run }) {
           recipe: display.recipe,
           buildPhases,
           gridTicks,
+          capacityCfg,
         });
       }
       return { key: display.key, display, row };

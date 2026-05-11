@@ -8,10 +8,15 @@
 //     period: 300,
 //     groups: [
 //       {
-//         item:   "iron-plate",
-//         source: "buffer" | "inventory",
-//         ticks:  [3600, 3900, 4200, ...],  // aligned-period change ticks
-//         counts: [120,  140,  165,  ...]   // count effective from `ticks[i]`
+//         item:     "iron-plate",
+//         source:   "buffer" | "inventory",
+//         ticks:    [3600, 3900, 4200, ...],  // aligned-period change ticks
+//         counts:   [120,  140,  165,  ...],  // count effective from `ticks[i]`
+//         entities: [{ name: "steel-chest", timeBuilt: 12345 }, ...]
+//                   // only on `source: "buffer"` groups; needed at render
+//                   // time to derive chestCount / bufferLimit by joining
+//                   // with game-data capacities (chestSlots × stackSizes
+//                   // for solids, tankCapacity for fluids).
 //       },
 //       ...
 //     ]
@@ -76,7 +81,12 @@ export function buildStocks(runDir, rocketLaunchTick) {
       }
     }
     while (ticks.length && counts[0] === 0) { ticks.shift(); counts.shift(); }
-    if (ticks.length) groups.push({ item, source: 'buffer', ticks, counts });
+    if (ticks.length) {
+      // Per-entity metadata for render-time capacity / chestCount. Order
+      // doesn't matter — render-time derivation is order-independent.
+      const entities = buffers.map(b => ({ name: b.name, timeBuilt: b.timeBuilt }));
+      groups.push({ item, source: 'buffer', ticks, counts, entities });
+    }
   }
 
   // --- Player inventory ---

@@ -21,6 +21,7 @@ import { ChartTooltip, type TooltipState } from './Tooltip';
 import { buildRecipeRow } from '../lib/recipeRow';
 import { phasesFrom } from '../lib/phaseSets';
 import type { ProductionCube, StocksDataset } from '../lib/runDatasets';
+import { useGameData } from '../server/GameDataContext';
 import './EndGameWidgets.css';
 
 const W = 1500;
@@ -51,6 +52,7 @@ const MIXED_ROWS: Array<{
 ];
 
 export function MixedSegmentWidget({ run }: { run: Run }) {
+  const gameData = useGameData();
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
 
@@ -74,15 +76,23 @@ export function MixedSegmentWidget({ run }: { run: Run }) {
   const fromMixed = useMemo(() => phasesFrom(run.phases, 'Mixed'), [run.phases]);
 
   const recipes = useMemo(
-    () => MIXED_ROWS.map(({ recipe, mode, fromMixed: useFromMixed }) => ({
-      ...buildRecipeRow(cube, stocks, {
-        recipe,
-        gridTicks,
-        buildPhases: useFromMixed ? fromMixed : null,
-      }),
-      mode,
-    })),
-    [cube, stocks, gridTicks, fromMixed],
+    () => {
+      const capacityCfg = {
+        chestSlots: gameData.recipes.chestSlots,
+        stackSizes: gameData.recipes.stackSizes,
+        tankCapacity: gameData.recipes.tankCapacity,
+      };
+      return MIXED_ROWS.map(({ recipe, mode, fromMixed: useFromMixed }) => ({
+        ...buildRecipeRow(cube, stocks, {
+          recipe,
+          gridTicks,
+          buildPhases: useFromMixed ? fromMixed : null,
+          capacityCfg,
+        }),
+        mode,
+      }));
+    },
+    [cube, stocks, gridTicks, fromMixed, gameData],
   );
 
   const innerW = W - MARGIN_LEFT - MARGIN_RIGHT;

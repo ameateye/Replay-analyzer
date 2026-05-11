@@ -44,6 +44,13 @@ export type GameData = {
   };
   recipes: {
     outputCount: RecipeOutputCount;
+    // Buffer-capacity inputs: chestSlots is inventory slot count per chest
+    // entity; stackSizes is item stack size; tankCapacity is the fluid
+    // tank capacity. Joined at render time with `stocks.entities` to
+    // derive chestCount + the buffer-limit reference line.
+    chestSlots: Record<string, number>;
+    stackSizes: Record<string, number>;
+    tankCapacity: number;
     endGameDisplay: EndGameRecipeDisplay[];
     mixedSegmentDisplay: EndGameRecipeDisplay[];
     oilPhaseDisplay: PhaseDisplay;

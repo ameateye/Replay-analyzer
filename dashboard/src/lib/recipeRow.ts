@@ -5,13 +5,12 @@
 // period (matching the chart's grid) instead of joining raw machine-
 // production + bufferAmounts + playerInventory at build time.
 //
-// Capacity / chestCount are not yet sourced from the new datasets — the
-// cube + stocks v1 don't carry buffer-entity metadata. Widgets that need
-// them in step 3 of the redesign get `bufferLimit: null`,
-// `showBufferLimit: false`, `chestCount: 0` for now. If a converted widget
-// needs the buffer-limit reference line back, the right move is to extend
-// stocks-prep (or add a sibling capacity dataset) rather than dig back
-// into the raw files.
+// chestCount and the buffer-limit series are derived from the per-entity
+// metadata that stocks-prep attaches to each `source: 'buffer'` group,
+// joined at render time with game-data capacities (chestSlots × stackSizes
+// for solids, tankCapacity for fluids). Callers pass `capacityCfg` from
+// `useGameData()` — when omitted, chestCount falls back to 0 and the
+// buffer-limit line is suppressed (`showBufferLimit: false`).
 
 import type {
   ProductionCube,
@@ -21,7 +20,9 @@ import type {
 } from './runDatasets';
 import { STATUS_KEYS } from './runDatasets';
 import { projectProduction } from './projectProduction';
-import { projectStocks } from './projectStocks';
+import { projectStocks, bufferApproachesCapacity, type CapacityCfg } from './projectStocks';
+
+export type { CapacityCfg } from './projectStocks';
 
 // Mirrors the Recipe type ProductionWidget.tsx consumes. Kept structurally
 // identical so a widget can swap its data source without touching its row
@@ -71,6 +72,11 @@ export type BuildRecipeRowOpts = {
   stockSources?: ReadonlySet<StocksSource> | null;
   // Period-aligned tick array, same grid used across the widget.
   gridTicks: number[];
+  // Game-data capacities used to derive chestCount + the buffer-limit
+  // reference series. Pass `gameData.recipes` (or the three fields below)
+  // from `useGameData()`. When omitted, chestCount stays 0 and the
+  // buffer-limit line is suppressed.
+  capacityCfg?: CapacityCfg | null;
 };
 
 export function buildRecipeRow(
@@ -78,19 +84,21 @@ export function buildRecipeRow(
   stocks: StocksDataset,
   opts: BuildRecipeRowOpts,
 ): RecipeRow {
-  const { recipe, buildPhases, stockSources, gridTicks } = opts;
+  const { recipe, buildPhases, stockSources, gridTicks, capacityCfg } = opts;
 
   const prod = projectProduction(cube, { recipe, buildPhases, gridTicks });
-  const stk = projectStocks(stocks, { item: recipe, sources: stockSources, gridTicks });
+  const stk = projectStocks(stocks, { item: recipe, sources: stockSources, gridTicks, capacityCfg });
 
   const round2 = (arr: number[]) => arr.map(v => +v.toFixed(2));
   const roundInt = (arr: number[]) => arr.map(v => Math.round(v));
   const roundMap2 = (m: Record<string, number[]>) =>
     Object.fromEntries(Object.entries(m).map(([k, arr]) => [k, round2(arr)]));
 
+  const showBufferLimit = bufferApproachesCapacity(stk.buffer, stk.capacity);
+
   return {
     recipe,
-    chestCount: 0,
+    chestCount: stk.chestCount,
     finalCum: prod.finalCum,
     peakActual: +prod.peakActual.toFixed(2),
     peakPotential: +prod.peakPotential.toFixed(2),
@@ -108,9 +116,9 @@ export function buildRecipeRow(
     cum: roundInt(prod.cum),
     buffer: roundInt(stk.buffer),
     bufferWithInv: roundInt(stk.bufferWithInv),
-    bufferLimit: null,
-    peakBufferLimit: 0,
-    showBufferLimit: false,
+    bufferLimit: showBufferLimit && stk.capacity ? stk.capacity.map(v => Math.round(v)) : null,
+    peakBufferLimit: showBufferLimit ? Math.round(stk.peakCapacity) : 0,
+    showBufferLimit,
   };
 }
 
@@ -228,21 +236,22 @@ export function buildCombinedRecipeRow(
 // In the new stocks schema fluids and solids share the same `buffer` source
 // (tanks were merged with chests under a unified item-source schema), so
 // this is just a thin wrapper around projectStocks that produces a
-// Recipe-shaped row with all production fields zeroed. Capacity / chest
-// count aren't sourced from the new datasets in v1 — see the caveat in
-// buildRecipeRow above.
+// Recipe-shaped row with all production fields zeroed. `chestCount` here
+// is the tank count for the fluid (the headline shows "X tanks" via the
+// widget's fluid-buffer rendering).
 export function buildFluidBufferRow(
   stocks: StocksDataset,
-  opts: { item: string; gridTicks: number[] },
+  opts: { item: string; gridTicks: number[]; capacityCfg?: CapacityCfg | null },
 ): RecipeRow {
-  const { item, gridTicks } = opts;
+  const { item, gridTicks, capacityCfg } = opts;
   const N = gridTicks.length;
-  const stk = projectStocks(stocks, { item, gridTicks });
+  const stk = projectStocks(stocks, { item, gridTicks, capacityCfg });
   const zeros = () => new Array(N).fill(0);
   const buffer = stk.buffer.map(v => Math.round(v));
+  const showBufferLimit = bufferApproachesCapacity(stk.buffer, stk.capacity);
   return {
     recipe: item,
-    chestCount: 0,
+    chestCount: stk.chestCount,
     finalCum: 0,
     peakActual: 0,
     peakPotential: 0,
@@ -258,8 +267,8 @@ export function buildFluidBufferRow(
     cum: zeros(),
     buffer,
     bufferWithInv: buffer,
-    bufferLimit: null,
-    peakBufferLimit: 0,
-    showBufferLimit: false,
+    bufferLimit: showBufferLimit && stk.capacity ? stk.capacity.map(v => Math.round(v)) : null,
+    peakBufferLimit: showBufferLimit ? Math.round(stk.peakCapacity) : 0,
+    showBufferLimit,
   };
 }

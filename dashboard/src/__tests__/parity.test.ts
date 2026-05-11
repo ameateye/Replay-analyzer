@@ -1,6 +1,8 @@
-// Numeric parity between the legacy widget-shaped run JSON (committed at
-// HEAD; matches the currently-published dashboard) and the render-time
-// projection of the new production/stocks datasets.
+// Numeric parity between the legacy widget-shaped run JSON (pinned to
+// 9485b47^ — the last commit with the old `endGame` / `mixedSegment` /
+// `oilPhase` / `fullBuildPhase` top-level fields, and the snapshot the
+// published dashboard was built from) and the render-time projection of
+// the new production/stocks datasets.
 //
 // Why this test exists: the per-run data redesign deleted four widget-shaped
 // preps (`end-game-production-prep`, `mixed-segment-prep`, `oil-phase-prep`,
@@ -9,17 +11,21 @@
 // numbers exactly — same period grid, same ±12-period smoothing, same
 // gap-clamp on losses, same 1-period slack on phase membership.
 //
-// Strategy: for each committed run, retrieve HEAD's <run>.json via
-// `git show` (legacy widget fields, no production/stocks), load the working-
-// tree's <run>.json (new production + stocks, no legacy fields), feed the
-// new datasets through `buildRecipeRow` / `buildCombinedRecipeRow` /
-// `buildFluidBufferRow` mirroring each widget's runtime config, and diff
-// the projected rows against the legacy rows. Both come from the same
-// `extracted-data/` source so the comparison is apples-to-apples.
+// Strategy: for each committed run, retrieve the pre-refactor <run>.json
+// via `git show 9485b47^:…` (legacy widget fields, no production/stocks),
+// load the working-tree's <run>.json (new production + stocks, no legacy
+// fields), feed the new datasets through `buildRecipeRow` /
+// `buildCombinedRecipeRow` / `buildFluidBufferRow` mirroring each widget's
+// runtime config, and diff the projected rows against the legacy rows. Both
+// come from the same `extracted-data/` source so the comparison is
+// apples-to-apples.
 //
 // Known caveats (excluded from the diff):
-//   - chestCount, bufferLimit, peakBufferLimit, showBufferLimit: not yet
-//     sourced from the new datasets. Tracked in src/lib/recipeRow.ts.
+//   - bufferLimit, peakBufferLimit, showBufferLimit: derived at render time
+//     from game-data capacities + the new stocks `entities` field, but the
+//     "approaches capacity" heuristic + integer rounding doesn't always
+//     match the legacy series tick-for-tick (legacy emitted the limit even
+//     for some rows that didn't approach 50%, e.g.). chestCount IS checked.
 //   - `excludeInventory` rows collapse bufferWithInv onto buffer in the
 //     new path; the test honors the same collapse before comparing.
 
@@ -43,8 +49,16 @@ const REPO_ROOT = path.resolve(DASHBOARD_ROOT, '..');
 
 const RUNS = ['DS-2_09_42', 'DS-2_14_45', 'DS-2_16_04', 'DS-2_17_29', 'DS-2_19_20'];
 
+// Last commit with the pre-redesign widget-shaped JSON. Pinning to this
+// SHA (rather than HEAD) keeps the test working after the refactor commits
+// land — HEAD no longer has the legacy widget fields. Using `~1` instead
+// of `^`: on Windows execSync routes through cmd.exe, which treats `^` as
+// an escape character and silently strips it (so `9485b47^` resolves to
+// 9485b47, not its parent).
+const LEGACY_REF = '9485b47~1';
+
 function readLegacyJson(runName: string): any {
-  const out = execSync(`git show HEAD:dashboard/src/data/${runName}.json`, {
+  const out = execSync(`git show ${LEGACY_REF}:dashboard/src/data/${runName}.json`, {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     maxBuffer: 200 * 1024 * 1024,
@@ -58,12 +72,12 @@ function readCurrentJson(runName: string): any {
   );
 }
 
-// Use HEAD's recipes.json so the display config matches the pipeline that
-// produced HEAD's legacy widget fields. Working-tree recipes.json may have
-// added new sections (e.g. frontSideDisplay) but the four converted widgets'
-// configs are unchanged — this is just belt-and-braces.
-function readHeadRecipes(): any {
-  const out = execSync('git show HEAD:game-data/recipes.json', {
+// Use the legacy-pinned recipes.json so the display config matches the
+// pipeline that produced the legacy widget fields. Working-tree recipes.json
+// may have added new sections (e.g. frontSideDisplay) but the four converted
+// widgets' configs are unchanged at LEGACY_REF — belt-and-braces.
+function readLegacyRecipes(): any {
+  const out = execSync(`git show ${LEGACY_REF}:game-data/recipes.json`, {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   });
@@ -97,6 +111,10 @@ const ARRAY_FIELDS: Array<keyof RecipeRow> = [
 ];
 const SCALAR_FIELDS: Array<keyof RecipeRow> = [
   'finalCum', 'peakActual', 'peakPotential', 'peakBuffer', 'peakBufferWithInv',
+  // chestCount derives from `stocks.entities` × game-data capacities at
+  // render time. Same source the legacy prep used (the entity list in
+  // bufferAmounts.json), so an exact integer match is expected.
+  'chestCount',
 ];
 
 // Tolerances:
@@ -147,6 +165,7 @@ function assertArrayClose(got: number[], want: number[], absTol: number, relTol:
 
 function tolFor(field: keyof RecipeRow, wantValue: number): number {
   if (field === 'finalCum' || field === 'peakBuffer' || field === 'peakBufferWithInv'
+      || field === 'chestCount'
       || field === 'cum' || field === 'buffer' || field === 'bufferWithInv') {
     return INT_TOL;
   }
@@ -184,8 +203,16 @@ function assertRowParity(got: RecipeRow, want: any, label: string, opts: { exclu
   }
 }
 
-let HEAD_RECIPES: any;
-beforeAll(() => { HEAD_RECIPES = readHeadRecipes(); });
+let LEGACY_RECIPES: any;
+let CAPACITY_CFG: { chestSlots: Record<string, number>; stackSizes: Record<string, number>; tankCapacity: number };
+beforeAll(() => {
+  LEGACY_RECIPES = readLegacyRecipes();
+  CAPACITY_CFG = {
+    chestSlots: LEGACY_RECIPES.chestSlots,
+    stackSizes: LEGACY_RECIPES.stackSizes,
+    tankCapacity: LEGACY_RECIPES.tankCapacity,
+  };
+});
 
 describe.each(RUNS)('Run %s', (runName) => {
   let legacy: any;
@@ -203,12 +230,12 @@ describe.each(RUNS)('Run %s', (runName) => {
   });
 
   it('endGame parity (5 recipes)', () => {
-    const display = HEAD_RECIPES.endGameDisplay as Array<{ recipe: string }>;
+    const display = LEGACY_RECIPES.endGameDisplay as Array<{ recipe: string }>;
     expect(display.length).toBe(legacy.endGame.recipes.length);
 
     for (let i = 0; i < display.length; i++) {
       const want = legacy.endGame.recipes[i];
-      const got = buildRecipeRow(cube, stocks, { recipe: display[i].recipe, gridTicks });
+      const got = buildRecipeRow(cube, stocks, { recipe: display[i].recipe, gridTicks, capacityCfg: CAPACITY_CFG });
       expect(got.recipe, `row ${i}: recipe id`).toBe(want.recipe);
       assertRowParity(got, want, `endGame[${got.recipe}]`);
     }
@@ -225,6 +252,7 @@ describe.each(RUNS)('Run %s', (runName) => {
         recipe: cfg.recipe,
         gridTicks,
         buildPhases: cfg.fromMixed ? fromMixed : null,
+        capacityCfg: CAPACITY_CFG,
       });
       expect(got.recipe, `row ${i}: recipe id`).toBe(want.recipe);
       assertRowParity(got, want, `mixed[${got.recipe}]`);
@@ -232,7 +260,7 @@ describe.each(RUNS)('Run %s', (runName) => {
   });
 
   it('oilPhase parity (10 rows, mixed modes incl. fluid-buffer + components)', () => {
-    const rows = HEAD_RECIPES.oilPhaseDisplay.rows as Array<any>;
+    const rows = LEGACY_RECIPES.oilPhaseDisplay.rows as Array<any>;
     expect(rows.length).toBe(legacy.oilPhase.rows.length);
 
     const beforeMixed = phasesBefore(current.phases, 'Mixed');
@@ -243,7 +271,7 @@ describe.each(RUNS)('Run %s', (runName) => {
       const buildPhases = cfg.machineFilter === 'before-mixed' ? beforeMixed : null;
       let got: RecipeRow;
       if (cfg.mode === 'fluid-buffer') {
-        got = buildFluidBufferRow(stocks, { item: cfg.recipe, gridTicks });
+        got = buildFluidBufferRow(stocks, { item: cfg.recipe, gridTicks, capacityCfg: CAPACITY_CFG });
       } else if (cfg.components && cfg.components.length > 0) {
         got = buildCombinedRecipeRow(cube, {
           rowRecipe: cfg.components[0].recipe,
@@ -251,14 +279,14 @@ describe.each(RUNS)('Run %s', (runName) => {
           gridTicks,
         });
       } else {
-        got = buildRecipeRow(cube, stocks, { recipe: cfg.recipe, gridTicks, buildPhases });
+        got = buildRecipeRow(cube, stocks, { recipe: cfg.recipe, gridTicks, buildPhases, capacityCfg: CAPACITY_CFG });
       }
       assertRowParity(got, want, `oil[${cfg.key}]`);
     }
   });
 
   it('fullBuildPhase parity (8 rows, after-full-build-start filter + excludeInventory)', () => {
-    const rows = HEAD_RECIPES.fullBuildDisplay.rows as Array<any>;
+    const rows = LEGACY_RECIPES.fullBuildDisplay.rows as Array<any>;
     expect(rows.length).toBe(legacy.fullBuildPhase.rows.length);
 
     const fromFullBuild = phasesFrom(current.phases, 'Full build');
@@ -275,7 +303,7 @@ describe.each(RUNS)('Run %s', (runName) => {
           gridTicks,
         });
       } else {
-        got = buildRecipeRow(cube, stocks, { recipe: cfg.recipe, gridTicks, buildPhases });
+        got = buildRecipeRow(cube, stocks, { recipe: cfg.recipe, gridTicks, buildPhases, capacityCfg: CAPACITY_CFG });
       }
       assertRowParity(got, want, `fullBuild[${cfg.key}]`, { excludeInventory: !!cfg.excludeInventory });
     }

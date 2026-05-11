@@ -33,15 +33,27 @@ export type ProductionCube = {
 
 export type StocksSource = 'buffer' | 'inventory';
 
+// Per-entity metadata for a `source: 'buffer'` group. Joined with
+// game-data capacities (chestSlots × stackSizes for solids, tankCapacity
+// for fluids) at render time to derive chestCount + per-tick bufferLimit.
+// `timeBuilt` gates an entity's contribution to capacity to ticks after it
+// was placed.
+export type StocksBufferEntity = {
+  name: string;
+  timeBuilt: number;
+};
+
 // Change-event series with sample-and-hold semantics. `counts[i]` is the
 // aggregated count effective from `ticks[i]` (inclusive) until `ticks[i+1]`
 // (exclusive), or to the end of the run for the last entry. Render-time
 // walkers reconstruct dense per-period series.
+// `entities` is only emitted for `source: 'buffer'` groups.
 export type StocksGroup = {
   item: string;
   source: StocksSource;
   ticks: number[];
   counts: number[];
+  entities?: StocksBufferEntity[];
 };
 
 export type StocksDataset = {

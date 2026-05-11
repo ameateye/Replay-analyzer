@@ -67,6 +67,8 @@ Two layers of derived data live in this repo:
 - **Per‑run, build‑time** (`dashboard/src/data/<run>.json`) — heavy computation: per‑tick aggregation, phase detection, series clipping. Runs once per run via `npm run data`. Committed.
 - **Cross‑run, runtime** (`game-data/*.json`) — lookups: tech icons, tech requirements, recipe metadata (output counts, display config), science‑pack tiers/colors, phase definitions. Loaded once at app start via `GameDataProvider`. Don't bake this into per‑run JSONs.
 
+Inside the per‑run JSON, four of the phase widgets (Oil / Mixed / Full build / Late game) read from a shared `production` cube + `stocks` dataset that's projected into row shapes at render time. The cube schema, projection helpers, extension recipes, and the parity tests that guard the projection live in [docs/architecture/per_run_data.md](docs/architecture/per_run_data.md). **Read it before adding a widget or modifying any of `production-cube-prep.mjs`, `stocks-prep.mjs`, or `dashboard/src/lib/{recipeRow,projectProduction,projectStocks}.ts`.**
+
 ### Report structure
 
 The dashboard reads **top‑to‑bottom: overview → deep dive.**
@@ -279,21 +281,23 @@ The dashboard is **visx‑native**. All chart geometry is React + visx component
 
 #### Add a phase widget
 
-1. Build the run‑derived input in a new prep module (or extend an existing one). Wire into `build-run-data.mjs`.
-2. Add display config to `game-data/recipes.json` if the widget needs labels/colors that should be reusable across runs without rebuilding per‑run JSONs.
-3. Reuse existing primitives (`ProductionRow`, the groups/rows display config) rather than inventing parallel shapes.
-4. Register in [phaseRegistry.ts](dashboard/src/components/phaseRegistry.ts):
+**First check whether your data is already in the cube.** Four of the phase widgets (Oil, Mixed, Full build, Late game) project from the shared `production` cube + `stocks` dataset at render time — adding a row, or even a whole new widget keyed off the same data, needs **no prep module change**. The full extension recipes (new row, new widget, new dataset, extending the cube schema) live in [docs/architecture/per_run_data.md](docs/architecture/per_run_data.md#how-to-extend); the short version:
 
-   ```ts
-   export const PHASE_WIDGETS: Record<string, PhaseWidgetEntry> = {
-     'Your phase name': { dataKey: 'yourPhaseDataKey', Widget: YourWidget },
-     // …
-   };
-   ```
+| Your widget needs… | Path |
+|---|---|
+| Recipe production / losses / stocks already in the cube | Add a `*Display` entry in `game-data/recipes.json`, build a component that iterates it and calls `buildRecipeRow` from `dashboard/src/lib/recipeRow.ts`, register with `dataKey: 'production'`. No prep file. |
+| Different data source (e.g. `minerActivity.json`, spatial filter) | New `dashboard/scripts/<thing>-prep.mjs` → wire into `build-run-data.mjs` → component → register with its own `dataKey`. |
 
-   The phase name must match `game-data/build-phases.json`. The `dataKey` must match the field name on `Run` written by your prep module.
+Registration:
 
-5. Rebuild a run with `npm run data`; the widget renders automatically when that phase is selected.
+```ts
+export const PHASE_WIDGETS: Record<string, PhaseWidgetEntry> = {
+  'Your phase name': { dataKey: 'production' /* or your prep's output field */, Widget: YourWidget },
+  // …
+};
+```
+
+The phase name must match `game-data/build-phases.json`. Whichever path you took, **run `npm test` and `npm run test:visual` before you PR** — the parity tests anchor against the published dashboard's numbers, and they're how we catch redesign drift early.
 
 #### Add a category (or extend an existing one)
 
@@ -351,8 +355,13 @@ The new JSON appears in Factorio's `script-output` after the next `/export-repla
 
 1. Branch off `main` (or work on your fork's `main` if self‑hosting).
 2. Build and run locally before opening the PR (`npm run build && npm run dev`). Visually verify the run picker, phase strip, and at least one phase widget render.
-3. PR description: include a screenshot or short screen recording for visual changes. Phase widgets have many states across the published runs — check yours renders for each.
-4. Pages deploy is automatic on push to `main` ([deploy-dashboard.yml](.github/workflows/deploy-dashboard.yml)). The deployed URL is https://ameateye.github.io/Replay-analyzer/.
+3. **Run the parity tests** if you've touched anything in the production‑cube / stocks pipeline or the four converted widgets:
+   - `cd dashboard && npm test` — numeric parity (vitest). Replays the converted widgets through the render‑time projection and diffs against the legacy series committed at HEAD.
+   - `cd dashboard && npm run test:visual` — visual parity (Playwright). Boots a dev server, screenshots each phase widget locally and on the published site, pixel‑diffs them. First time: `npx playwright install chromium`.
+   - On failure, the visual suite drops `local.png` / `published.png` / `diff.png` triplets under `dashboard/e2e/screenshots/`. Set `KEEP_SCREENSHOTS=1` to dump them on every run.
+   - If you intentionally drift the numbers (e.g. a deliberate fix), widen the tolerance in `parity.test.ts` with a comment explaining *why* — don't just delete the assertion.
+4. PR description: include a screenshot or short screen recording for visual changes. Phase widgets have many states across the published runs — check yours renders for each.
+5. Pages deploy is automatic on push to `main` ([deploy-dashboard.yml](.github/workflows/deploy-dashboard.yml)). The deployed URL is https://ameateye.github.io/Replay-analyzer/.
 
 ## When you're not sure
 

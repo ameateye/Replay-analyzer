@@ -82,9 +82,13 @@ Top‑level fields written by `build-run-data.mjs`:
 | `idleRects` | Bands where labs are idle: `{startMin, widthMin}` |
 | `researchIntervals` | Completed tech research: `{name, startMin, endMin}`. Augmented at runtime with `iconUrl` and `requiredPacks` from game‑data |
 | `phases` | Strategic build‑phase boundaries: `{name, startMin, endMin}`. Names must match `game-data/build-phases.json` |
-| `mixedSegment`, `oilPhase`, `fullBuildPhase`, `endGame` | Per‑phase widget inputs (each prep documents its own shape) |
+| `production` | Per‑(recipe × buildPhase) production cube. ~52 MB raw → ~1.5 MB grouped/columnar at the cube's native 5 s period. Four phase widgets (Oil / Mixed / Full build / Late game) project from this at render time. See [docs/architecture/per_run_data.md](docs/architecture/per_run_data.md). |
+| `stocks` | Per‑(item × source) change‑event series, sample‑and‑hold reconstructed at render time. Unifies `bufferAmounts.json` + `playerInventory.json`. |
+| `burnerPhase`, `manualGathering` | Widget‑shaped preps that don't fit the cube (different data source / shape). |
 
 The `Run` type is `typeof r0` from `dashboard/src/data/index.ts`. Adding a top‑level field means adding it to all runs (or guarding with `?.` in components).
+
+**Adding or modifying anything that touches `production` / `stocks` / the render‑time projection / phase boundaries / the parity tests: read [docs/architecture/per_run_data.md](docs/architecture/per_run_data.md) first.** It documents the dataset shapes, invariants, extension recipes (new row / new widget / new dataset), and the parity contract the `npm test` + `npm run test:visual` suites guard.
 
 ## Repo map
 
@@ -132,13 +136,15 @@ Gitignored, present locally but not in PRs:
 8. **npm install on the data collection layer requires `--ignore-scripts`** on Node 20. `factoriomod-debug` has a `.ts` postinstall script Node 20's loader can't run. The TSTL build itself works.
 9. **Single‑run UI.** `App.tsx` selects one run at a time via the run picker. Cross‑run comparison is not implemented — if a request implies it, surface that gap rather than implementing a half‑version.
 10. **Default run is build‑mtime‑newest.** `build-run-data.mjs` rewrites `src/data/index.ts` ordered by mtime descending; the most recently rebuilt run becomes `defaultRun`.
+11. **Parity tests guard the cube/stocks projection.** Any change touching `production-cube-prep.mjs`, `stocks-prep.mjs`, `dashboard/src/lib/{recipeRow,projectProduction,projectStocks,phaseSets,runDatasets}.ts`, smoothing/period constants, or the four converted widgets (EndGame / Mixed / Oil / FullBuild) MUST keep `npm test` green and visually equivalent under `npm run test:visual`. If you intentionally drift, widen the tolerance with a comment explaining *why*. Architecture + invariants live in [docs/architecture/per_run_data.md](docs/architecture/per_run_data.md).
 
 ## Where to make common changes
 
 | Task | Files |
 |---|---|
-| Add a chart series or modify chart geometry | `dashboard/src/components/<Component>.tsx` (+ prep module if new derived series) |
-| Add a phase widget | New `dashboard/scripts/*-prep.mjs` → wire into `build-run-data.mjs` → new component → register in `dashboard/src/components/phaseRegistry.ts` (key must match `game-data/build-phases.json` phase name) |
+| Add a chart series or modify chart geometry | `dashboard/src/components/<Component>.tsx` (+ prep module if new derived series; if the series already exists in the production cube, no prep change needed — see [docs/architecture/per_run_data.md](docs/architecture/per_run_data.md#how-to-extend)) |
+| Add a phase widget that reads from `production` + `stocks` | Add a `*Display` config in `game-data/recipes.json` → new component under `dashboard/src/components/` calling `buildRecipeRow` from `src/lib/recipeRow.ts` → register in `phaseRegistry.ts` with `dataKey: 'production'`. **No prep file or `build-run-data.mjs` change needed.** Full recipe in [docs/architecture/per_run_data.md](docs/architecture/per_run_data.md#add-a-new-widget-that-uses-cube--stocks). |
+| Add a phase widget that needs data the cube doesn't carry | New `dashboard/scripts/<thing>-prep.mjs` (different data source or shape) → wire into `build-run-data.mjs` → new component → register in `phaseRegistry.ts` with its own `dataKey` (key must match `game-data/build-phases.json` phase name) |
 | Add or extend a run category | Fork `dashboard/scripts/phase-boundaries.mjs` heuristics, edit `game-data/build-phases.json` (phase set + base machines) and `game-data/recipes.json` (display config), then either reuse existing widgets or add new ones via `phaseRegistry.ts` |
 | Add a published run (PR path) | Run extractor pipeline → `cd dashboard && npm run data ../extracted-data/<run>` → commit `src/data/<run>.json` and `src/data/index.ts` → PR. Also valid: web‑edit `src/data/<run>.json` + `index.ts` directly on a fork without cloning. See CONTRIBUTING §1 |
 | Add a published run (self‑host path) | Same as above but on a fork; the fork's GitHub Pages auto‑deploys at `https://<user>.github.io/<fork-name>/`. No PR. See CONTRIBUTING §2 |

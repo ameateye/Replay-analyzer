@@ -140,6 +140,8 @@ PRs to the published dashboard are reviewed by the maintainer ([@ameateye](https
 
 The full developer guide — code map, dev setup, how to add a chart / widget / category / metric, conventions, gotchas — lives in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
+Per‑run data architecture (what the cube + stocks datasets are, how widgets project from them at render time, how to extend without breaking parity): **[docs/architecture/per_run_data.md](docs/architecture/per_run_data.md)**.
+
 Agent‑targeted reference (for Claude Code, Cursor, Codex, etc.): **[AGENTS.md](AGENTS.md)**.
 
 ---

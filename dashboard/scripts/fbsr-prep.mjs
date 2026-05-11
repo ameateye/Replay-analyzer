@@ -1,42 +1,46 @@
-// Prepares the input that ReplaySvgRender (Java/FBSR) consumes for one run.
+// Gap-fill orchestrator for the shared sprite store.
 //
-// FBSR's parser is anchored on the standard Factorio blueprint shape, so we
-// transform our per-source extraction JSONs (entityLayout, minerActivity,
-// machineProduction, labContents, bufferAmounts) into a synthetic blueprint
-// object plus a sidecar carrying the metadata FBSR doesn't care about
-// (build/remove ticks, unit numbers, recipe timelines, splitter/inserter
-// alt-mode state timelines).
+// Walks `extracted-data/<run>/*` to enumerate the (name, end-direction, end-bgt)
+// variants the run needs plus its recipe and filter-item sets, diffs that
+// against `game-data/map-sprite-meta.json` + `game-data/map-sprites.json`,
+// and — only if the diff is non-empty — invokes the Java `SpriteEnumerator`
+// CLI to render the missing variants and merge the result back into the
+// shared store. See docs/specs/fbsr_elimination.md (Component C).
 //
-// Outputs (under tools/output/):
-//   <RUN>.json         — { blueprint: {…FBSR shape…}, recipes: [name, …],
-//                          filterItems: [name, …] }
-//   <RUN>.timing.json  — { entityNumber → { tb, tr?, un, rs?, ss?, is? } }
+// Inputs:  extracted-data/<run>/{entityLayout,minerActivity,machineProduction,
+//                                labContents,bufferAmounts,rocketLaunchTime}.json
+//          game-data/map-sprite-meta.json   (current shared variant store)
+//          game-data/map-sprites.json       (current shared atlas)
+// Output:  updated game-data/{map-sprite-meta,map-sprites}.json (in place)
+//          tools/output/<run>.variants.json (transient handoff to Java)
+//          tools/output/<run>.sprite-build.json (Java output, transient)
 //
-// `recipes` and `filterItems` are unique-name lists: ReplaySvgRender renders
-// one icon sprite per entry so the React side can overlay them dynamically
-// as machines change recipes / splitters get filters / inserters change
-// filter sets during the run.
+// Idempotent: re-running with no new variants is a no-op and never spawns
+// Java. CI never calls this script — it only ever runs `npm run build`,
+// which reads the pre-built shared store.
 //
-// Splitter/inserter alt-mode timelines (ss / is on the timing record) only
-// exist on entities whose state ever differs from "no overlay". Splitters
-// without any priority and without a filter, or inserters with useFilters
-// false, get no timeline entry — saves space and skips empty work in
-// map-prep / MapView.
+// Usage:  node scripts/fbsr-prep.mjs <run-name>
+//
+// Build-time integration: build-run-data.mjs calls ensureSpriteCoverage()
+// before map-prep so a fresh extraction with new entity variants
+// auto-extends the shared store.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
-const RUN = process.argv[2] || 'DS-2_14_45';
-const SRC_DIR    = resolve(ROOT, 'extracted-data', RUN);
-// tools/output/ is the shared intermediate dir between fbsr-prep, the Java
-// renderer, and map-prep — all three hand off through one place.
-const OUT_JSON   = resolve(ROOT, 'tools', 'output', `${RUN}.json`);
-const OUT_TIMING = resolve(ROOT, 'tools', 'output', `${RUN}.timing.json`);
 
-const FACTORIO_VERSION = Number((2n << 48n) | (0n << 32n) | (20n << 16n) | 0n);
+const FBSR_DIR  = resolve(ROOT, 'Factorio-FBSR', 'FactorioBlueprintStringRenderer');
+const FBSR_JAR  = resolve(FBSR_DIR, 'target', 'FactorioBlueprintStringRenderer-0.0.1-SNAPSHOT.jar');
+const FBSR_CP   = resolve(FBSR_DIR, 'target', 'cp.txt');
+const JDK_HOME  = resolve(ROOT, 'tools', 'jdk21', 'jdk-21.0.11+10');
+const JAVA_EXE  = resolve(JDK_HOME, 'bin', 'java.exe');
+
+const META_PATH   = resolve(ROOT, 'game-data', 'map-sprite-meta.json');
+const SPRITE_PATH = resolve(ROOT, 'game-data', 'map-sprites.json');
 
 const LAYOUT_SCOPE = new Set([
   'transport-belt', 'fast-transport-belt', 'express-transport-belt',
@@ -47,304 +51,218 @@ const LAYOUT_SCOPE = new Set([
   'bulk-inserter',
 ]);
 
-function readJson(file) {
-  return JSON.parse(readFileSync(resolve(SRC_DIR, file), 'utf-8'));
+function readJsonOrNull(p) {
+  try { return JSON.parse(readFileSync(p, 'utf-8')); } catch { return null; }
 }
+function readJson(p) { return JSON.parse(readFileSync(p, 'utf-8')); }
 
-// Build splitter alt-mode timeline by folding mutations forward. Each event
-// is a state snapshot at a tick: { ts, ip, op, f } — input priority, output
-// priority, filter (item name or '' = none). We emit an event for the initial
-// state and another at every mutation that changes any of these fields.
-// Returns [] if the splitter never had any non-default state.
-function buildSplitterTimeline(e) {
-  let ip = e.splitterInputPriority  ?? 'none';
-  let op = e.splitterOutputPriority ?? 'none';
-  let f  = e.splitterFilter         ?? '';
-  const events = [{ ts: e.timeBuilt ?? 0, ip, op, f }];
+function foldDirection(e, cutoff) {
+  let dir = e.direction ?? 0;
+  let bgt = e.beltToGroundType ?? null;
   for (const m of e.mutations ?? []) {
-    let changed = false;
-    if (m.splitterInputPriority  !== undefined && m.splitterInputPriority  !== ip) { ip = m.splitterInputPriority;  changed = true; }
-    if (m.splitterOutputPriority !== undefined && m.splitterOutputPriority !== op) { op = m.splitterOutputPriority; changed = true; }
-    if (m.splitterFilter         !== undefined && m.splitterFilter         !== f)  { f  = m.splitterFilter;         changed = true; }
-    if (changed) events.push({ ts: m.tick, ip, op, f });
+    if (m.tick > cutoff) break;
+    if (m.direction !== undefined) dir = m.direction;
+    if (m.beltToGroundType !== undefined) bgt = m.beltToGroundType;
   }
-  // Drop the timeline entirely if every event is the no-overlay state
-  // (no priority and no filter). Saves bytes and cycles downstream.
-  const anyOverlay = events.some(ev => ev.ip !== 'none' || ev.op !== 'none' || ev.f !== '');
-  return anyOverlay ? events : [];
+  return { dir, bgt };
 }
 
-// Build inserter filter timeline. Each event: { ts, u, m, f } where
-// u = useFilters (bool), m = 'whitelist' | 'blacklist' | undefined,
-// f = string[] of item names. Only entities that ever had useFilters=true
-// emit a non-empty timeline.
-function buildInserterTimeline(e) {
-  // TypeScriptToLua serializes empty Lua tables as `{}` (JSON object)
-  // rather than `[]`. Normalize before any array operations.
-  const asArr = (v) => Array.isArray(v) ? v : [];
-  let u = e.inserterUseFilters ?? false;
-  let m = e.inserterFilterMode;
-  let f = asArr(e.inserterFilters);
-  const events = [{ ts: e.timeBuilt ?? 0, u, m, f }];
-  for (const mu of e.mutations ?? []) {
-    let changed = false;
-    if (mu.inserterUseFilters !== undefined && mu.inserterUseFilters !== u) { u = mu.inserterUseFilters; changed = true; }
-    if (mu.inserterFilterMode !== undefined && mu.inserterFilterMode !== m) { m = mu.inserterFilterMode; changed = true; }
-    if (mu.inserterFilters    !== undefined) {
-      const next = asArr(mu.inserterFilters);
-      if (!sameStrArr(next, f)) { f = next; changed = true; }
-    }
-    if (changed) events.push({ ts: mu.tick, u, m, f });
+function variantKey(name, dir, bgt) {
+  return `${name}|${dir ?? 0}|${bgt ?? '_'}`;
+}
+
+// Enumerate the (name, end-direction, end-bgt) variants, recipes, and
+// filter-items the run will reference at render time. Mirrors the
+// extraction performed by map-prep so the two stay in sync.
+function collectRunNeeds(runDir, durationTick) {
+  const variants = new Map();         // key → { name, direction, bgt }
+  const recipes = new Set();
+  const filterItems = new Set();
+
+  function addVariant(name, dir, bgt) {
+    const k = variantKey(name, dir, bgt);
+    if (!variants.has(k)) variants.set(k, { name, direction: dir ?? 0, bgt: bgt ?? null });
   }
-  const anyOverlay = events.some(ev => ev.u && ev.f.length > 0);
-  return anyOverlay ? events : [];
-}
 
-function sameStrArr(a, b) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
-function buildBlueprintObject(entities, label) {
-  return {
-    blueprint: {
-      item: 'blueprint',
-      label,
-      entities: entities.map((e, i) => {
-        const out = { entity_number: i + 1, name: e.name, position: e.position };
-        if (e.direction) out.direction = e.direction;
-        if (e.type)      out.type = e.type;
-        if (e.recipe)    out.recipe = e.recipe;
-        return out;
-      }),
-      version: FACTORIO_VERSION,
-    },
-  };
-}
-
-function main() {
-  // Each source contributes a uniform record:
-  //   { name, position {x,y}, direction?, recipe?, type?, timeBuilt, timeRemoved?, unitNumber }
-  const merged = [];
-
-  // 1) Belts / inserters from entityLayout (poles excluded by user-defined scope).
-  //
-  // The data layer stores the BUILD-TIME `direction` on the entity and
-  // appends every later rotation to `mutations[*].direction`. Reading
-  // `e.direction` alone gives the orientation the entity had when first
-  // placed, not the one in effect at the end of the run. For a static
-  // end-of-game render we want the latest folded value — otherwise rows
-  // that were rotated mid-build (e.g. row-3 of the top-left copper bank
-  // in DS-2_14_45, which was rotated N→S at tick 113103) end up drawn
-  // facing the wrong way and the inserter sprites disagree with the
-  // flow-arrows overlay.
-  const layout = readJson('entityLayout.json');
-  for (const e of layout.entities) {
+  // 1) entityLayout — belts / UBs / splitters / inserters in scope. Older
+  //    extractions may pre-date this collector; treat as empty.
+  const layout = readJsonOrNull(resolve(runDir, 'entityLayout.json'));
+  for (const e of layout?.entities ?? []) {
     if (!LAYOUT_SCOPE.has(e.name)) continue;
-    let direction = e.direction || 0;
-    let beltToGround = e.beltToGroundType;
-    for (const m of e.mutations ?? []) {
-      if (m.direction        !== undefined) direction    = m.direction;
-      if (m.beltToGroundType !== undefined) beltToGround = m.beltToGroundType;
-    }
-    const rec = {
-      name: e.name,
-      position: { x: e.location.x, y: e.location.y },
-      direction,
-      timeBuilt: e.timeBuilt ?? 0,
-      timeRemoved: e.timeRemoved,
-      unitNumber: e.unitNumber,
-    };
-    if (e.name.endsWith('underground-belt')) rec.type = beltToGround ?? 'input';
-
-    // Splitter alt-mode state timeline. Build is the initial event;
-    // every mutation that changes priority OR filter is an additional
-    // event. We only attach the timeline if the entity is ever non-default
-    // (any priority != 'none' OR any filter set), since the vast majority
-    // of splitters have nothing worth overlaying.
+    const { dir, bgt } = foldDirection(e, durationTick);
+    addVariant(e.name, dir, bgt);
+    // Splitter filters / inserter filters seed filterItems.
     if (e.name.endsWith('splitter')) {
-      const events = buildSplitterTimeline(e);
-      if (events.length > 0) rec.splitterTimeline = events;
+      if (e.splitterFilter) filterItems.add(e.splitterFilter);
+      for (const m of e.mutations ?? []) if (m.splitterFilter) filterItems.add(m.splitterFilter);
     }
-
-    // Inserter filter timeline. Same reasoning: only entities that ever
-    // had useFilters=true OR filters set get a timeline.
-    if (LAYOUT_SCOPE.has(e.name) && (
-        e.name === 'inserter' || e.name === 'burner-inserter' ||
-        e.name === 'long-handed-inserter' || e.name === 'fast-inserter' ||
-        e.name === 'filter-inserter' || e.name === 'stack-inserter' ||
-        e.name === 'stack-filter-inserter' || e.name === 'bulk-inserter')) {
-      const events = buildInserterTimeline(e);
-      if (events.length > 0) rec.inserterTimeline = events;
+    if (e.inserterFilters) {
+      const seed = Array.isArray(e.inserterFilters) ? e.inserterFilters : [];
+      for (const f of seed) filterItems.add(f);
     }
-
-    merged.push(rec);
-  }
-
-  // 2) Miners (minerActivity has its own per-tick status timeline; we only
-  //    need the entity record for rendering).
-  for (const m of readJson('minerActivity.json').miners) {
-    merged.push({
-      name: m.name,
-      position: { x: m.location.x, y: m.location.y },
-      direction: m.direction || 0,
-      timeBuilt: m.timeBuilt ?? 0,
-      timeRemoved: m.timeRemoved,
-      unitNumber: m.unitNumber,
-    });
-  }
-
-  // 3) Machines. Recipe-on-blueprint is the FIRST recipe ever set (FBSR
-  //    needs it to decide fluid-box rendering for refineries / chem plants).
-  //    The visible recipe-icon overlay comes from the recipeTimeline in the
-  //    timing sidecar, which carries every recipe change with its tick.
-  //
-  //    The data collector doesn't currently set timeRemoved on the machine
-  //    record, but it does mark the active recipe production with
-  //    stoppedReason: 'mined' | 'entity_died' when the entity is destroyed
-  //    (machine-production.ts onDeleted). Derive timeRemoved from that —
-  //    if any recipe was stopped due to deletion, the machine was removed
-  //    at that tick. (Other stop reasons — configuration_changed,
-  //    marked_for_deconstruction, disabled_by_script — leave the entity in
-  //    place and don't count as removal.)
-  for (const m of readJson('machineProduction.json').machines) {
-    const timeline = (m.recipes || [])
-      .filter(r => r && r.recipe)
-      .map(r => ({ tStart: r.timeStarted ?? 0, recipe: r.recipe }));
-    let timeRemoved = m.timeRemoved;
-    if (timeRemoved === undefined) {
-      for (const r of m.recipes || []) {
-        if ((r.stoppedReason === 'mined' || r.stoppedReason === 'entity_died')
-            && r.timeStopped !== undefined) {
-          if (timeRemoved === undefined || r.timeStopped > timeRemoved) {
-            timeRemoved = r.timeStopped;
-          }
-        }
-      }
-    }
-    merged.push({
-      name: m.name,
-      position: { x: m.location.x, y: m.location.y },
-      direction: m.direction || 0,
-      recipe: timeline[0]?.recipe,
-      recipeTimeline: timeline.length > 0 ? timeline : undefined,
-      timeBuilt: m.timeBuilt ?? 0,
-      timeRemoved,
-      unitNumber: m.unitNumber,
-    });
-  }
-
-  // 4) Labs (no direction — radial symmetry).
-  //
-  //    The data collector doesn't currently set timeRemoved on the lab
-  //    record. Derive it from the periodic packs[] timeline: every lab is
-  //    sampled every `period` ticks while it exists, so a lab whose last
-  //    sample is well before the latest sample seen across any lab was
-  //    removed shortly after that last sample. Threshold of 2*period to
-  //    avoid false-positives at the very end of the run (a lab that
-  //    survived to rocket-launch may still miss a sample by timing).
-  const labData = readJson('labContents.json');
-  let maxLabSample = 0;
-  for (const l of labData.labs) {
-    const last = l.packs[l.packs.length - 1];
-    if (last && last[0] > maxLabSample) maxLabSample = last[0];
-  }
-  for (const l of labData.labs) {
-    let timeRemoved = l.timeRemoved;
-    if (timeRemoved === undefined) {
-      const last = l.packs[l.packs.length - 1];
-      if (last && last[0] + labData.period * 2 < maxLabSample) {
-        timeRemoved = last[0] + labData.period;
-      }
-    }
-    merged.push({
-      name: l.name,
-      position: { x: l.location.x, y: l.location.y },
-      timeBuilt: l.timeBuilt ?? 0,
-      timeRemoved,
-      unitNumber: l.unitNumber,
-    });
-  }
-
-  // 5) Boxes — chests and tanks tracked alongside their content series in
-  //    bufferAmounts. No direction tracked (chests are radially symmetric;
-  //    tanks have orientation but the data layer doesn't capture it yet).
-  try {
-    for (const b of readJson('bufferAmounts.json').buffers) {
-      merged.push({
-        name: b.name,
-        position: { x: b.location.x, y: b.location.y },
-        timeBuilt: b.timeBuilt ?? 0,
-        timeRemoved: b.timeRemoved,
-        unitNumber: b.unitNumber,
-      });
-    }
-  } catch {
-    // bufferAmounts is optional in older extractions.
-  }
-
-  // Collect every distinct recipe ever seen — Java reads this list at the
-  // top of the input JSON and emits one icon sprite per recipe.
-  const recipeSet = new Set();
-  for (const e of merged) {
-    if (e.recipeTimeline) {
-      for (const r of e.recipeTimeline) recipeSet.add(r.recipe);
-    } else if (e.recipe) {
-      recipeSet.add(e.recipe);
+    for (const m of e.mutations ?? []) {
+      const next = m.inserterFilters;
+      if (Array.isArray(next)) for (const f of next) filterItems.add(f);
     }
   }
-  const recipesList = [...recipeSet].sort();
 
-  // Collect every distinct filter-item name ever seen — Java emits one
-  // icon sprite per item under sid `f:<itemName>`. Spans both splitters
-  // (single-item splitter_filter) and inserters (1-4 inserter_filters).
-  const filterItemSet = new Set();
-  for (const e of merged) {
-    if (e.splitterTimeline) {
-      for (const ev of e.splitterTimeline) if (ev.f) filterItemSet.add(ev.f);
-    }
-    if (e.inserterTimeline) {
-      for (const ev of e.inserterTimeline) for (const name of ev.f) filterItemSet.add(name);
-    }
+  // 2) minerActivity.
+  const minerData = readJsonOrNull(resolve(runDir, 'minerActivity.json'));
+  for (const m of minerData?.miners ?? []) addVariant(m.name, m.direction ?? 0, null);
+
+  // 3) machineProduction — variants + recipes.
+  const mp = readJsonOrNull(resolve(runDir, 'machineProduction.json'));
+  for (const m of mp?.machines ?? []) {
+    addVariant(m.name, m.direction ?? 0, null);
+    for (const r of m.recipes ?? []) if (r?.recipe) recipes.add(r.recipe);
   }
-  const filterItemsList = [...filterItemSet].sort();
 
-  const bp = buildBlueprintObject(merged, `replay-analyzer ${RUN} all-categories`);
-  bp.recipes = recipesList;
-  bp.filterItems = filterItemsList;
+  // 4) labs (no direction).
+  const labData = readJsonOrNull(resolve(runDir, 'labContents.json'));
+  for (const l of labData?.labs ?? []) addVariant(l.name, 0, null);
 
-  // Timing sidecar — keyed by 1-based entity_number (matches the order in
-  // bp.blueprint.entities). `rs` is the recipe timeline for machines that
-  // ever set a recipe.
-  const timing = {};
-  merged.forEach((e, i) => {
-    const rec = { tb: e.timeBuilt, un: e.unitNumber };
-    if (e.timeRemoved !== undefined) rec.tr = e.timeRemoved;
-    if (e.recipeTimeline) rec.rs = e.recipeTimeline.map(r => ({ ts: r.tStart, n: r.recipe }));
-    if (e.splitterTimeline)  rec.ss = e.splitterTimeline;
-    if (e.inserterTimeline)  rec.is = e.inserterTimeline;
-    timing[i + 1] = rec;
-  });
+  // 5) buffers (no direction).
+  const ba = readJsonOrNull(resolve(runDir, 'bufferAmounts.json'));
+  for (const b of ba?.buffers ?? []) addVariant(b.name, 0, null);
 
-  const counts = {};
-  for (const e of merged) counts[e.name] = (counts[e.name] || 0) + 1;
-
-  mkdirSync(dirname(OUT_JSON), { recursive: true });
-  writeFileSync(OUT_JSON,   JSON.stringify(bp, null, 2), 'utf-8');
-  writeFileSync(OUT_TIMING, JSON.stringify(timing),      'utf-8');
-
-  console.log('source dir:    ', SRC_DIR);
-  console.log('total merged:  ', merged.length);
-  console.log('with tr:       ', merged.filter(e => e.timeRemoved !== undefined).length);
-  console.log('with timeline: ', merged.filter(e => e.recipeTimeline).length);
-  console.log('unique recipes:', recipesList.length);
-  console.log('splitter ovly: ', merged.filter(e => e.splitterTimeline).length);
-  console.log('inserter ovly: ', merged.filter(e => e.inserterTimeline).length);
-  console.log('filter items:  ', filterItemsList.length);
-  console.log('by name:       ', counts);
-  console.log('json:          ', OUT_JSON);
-  console.log('timing:        ', OUT_TIMING);
+  return { variants, recipes, filterItems };
 }
 
-main();
+function diffAgainstStore(needs, meta, sprites) {
+  const missingVariants = [];
+  for (const [k, v] of needs.variants) if (!meta[k]) missingVariants.push(v);
+  const missingRecipes = [...needs.recipes].filter(r => !sprites[`r:${r}`]).sort();
+  const missingFilters = [...needs.filterItems].filter(f => !sprites[`f:${f}`]).sort();
+  return { missingVariants, missingRecipes, missingFilters };
+}
+
+function javaToolingReady() {
+  if (!existsSync(FBSR_JAR)) return { ok: false, reason: `FBSR jar missing: ${FBSR_JAR}` };
+  if (!existsSync(FBSR_CP))  return { ok: false, reason: `FBSR classpath file missing: ${FBSR_CP}` };
+  if (!existsSync(JAVA_EXE)) return { ok: false, reason: `JDK launcher missing: ${JAVA_EXE}` };
+  return { ok: true };
+}
+
+function invokeSpriteEnumerator(variantsPath, outputPath) {
+  const cpRaw = readFileSync(FBSR_CP, 'utf-8').trim();
+  const cp = `${FBSR_JAR};${cpRaw}`;
+  const args = ['-cp', cp, 'com.demod.fbsr.cli.SpriteEnumerator', variantsPath, outputPath];
+  const result = spawnSync(JAVA_EXE, args, {
+    cwd: FBSR_DIR,                              // SpriteEnumerator loads profiles/vanilla relative to cwd
+    env: { ...process.env, JAVA_HOME: JDK_HOME },
+    stdio: 'inherit',
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`SpriteEnumerator exit code ${result.status}`);
+}
+
+function mergeStore(metaOut, spritesOut) {
+  const meta    = existsSync(META_PATH)   ? readJson(META_PATH)   : {};
+  const sprites = existsSync(SPRITE_PATH) ? readJson(SPRITE_PATH) : {};
+
+  // SpriteEnumerator always numbers entity sids `s0`, `s1`, ... starting
+  // from zero. The existing atlas already occupies a contiguous range, so
+  // we remap each incoming `sN` to the next free index past the current
+  // maximum before merging — and rewrite the meta layers' `sid` fields to
+  // match. Recipe / filter sids are name-keyed (`r:<name>` / `f:<item>`)
+  // and can't collide with the entity sid space.
+  let maxSid = -1;
+  for (const k of Object.keys(sprites)) {
+    if (!/^s\d+$/.test(k)) continue;
+    const n = Number(k.slice(1));
+    if (n > maxSid) maxSid = n;
+  }
+  const sidRemap = new Map();
+  for (const k of Object.keys(spritesOut)) {
+    if (!/^s\d+$/.test(k)) continue;
+    sidRemap.set(k, `s${++maxSid}`);
+  }
+
+  let metaAdded = 0, spritesAdded = 0;
+  for (const [k, v] of Object.entries(metaOut)) {
+    if (meta[k]) continue;            // never overwrite — existing entries are authoritative
+    const layers = v.layers.map(l => ({ ...l, sid: sidRemap.get(l.sid) ?? l.sid }));
+    meta[k] = { layers };
+    metaAdded++;
+  }
+  for (const [k, v] of Object.entries(spritesOut)) {
+    const targetKey = sidRemap.get(k) ?? k;
+    if (sprites[targetKey]) continue; // existing entry wins (matches by name for r:/f:)
+    sprites[targetKey] = v;
+    spritesAdded++;
+  }
+
+  // Deterministic key order so the committed diff is stable.
+  const sortedMeta = {};
+  for (const k of Object.keys(meta).sort()) sortedMeta[k] = meta[k];
+  writeFileSync(META_PATH,   JSON.stringify(sortedMeta, null, 2));
+  writeFileSync(SPRITE_PATH, JSON.stringify(sprites));
+
+  return { metaAdded, spritesAdded };
+}
+
+// Top-level entry — called inline by build-run-data and as the script's
+// main(). Returns { status: 'ok' | 'gap-filled' | 'skipped' | 'no-tooling' }
+// with a short description. Never throws on missing Java tooling; the
+// pipeline degrades gracefully (map-prep just skips the missing variants).
+export function ensureSpriteCoverage(runName) {
+  const runDir = resolve(ROOT, 'extracted-data', runName);
+  if (!existsSync(runDir)) {
+    console.log(`fbsr-prep: extracted-data/${runName}/ not found — skipping`);
+    return { status: 'skipped', reason: 'no-extracted-data' };
+  }
+
+  const rocket = readJsonOrNull(resolve(runDir, 'rocketLaunchTime.json'));
+  const durationTick = rocket?.rocketLaunchTimes?.[0] ?? Number.MAX_SAFE_INTEGER;
+
+  const needs = collectRunNeeds(runDir, durationTick);
+  const meta    = existsSync(META_PATH)   ? readJson(META_PATH)   : {};
+  const sprites = existsSync(SPRITE_PATH) ? readJson(SPRITE_PATH) : {};
+  const { missingVariants, missingRecipes, missingFilters } = diffAgainstStore(needs, meta, sprites);
+
+  if (missingVariants.length === 0 && missingRecipes.length === 0 && missingFilters.length === 0) {
+    console.log(`fbsr-prep: store already covers ${runName} — no Java invocation needed`);
+    return { status: 'ok' };
+  }
+
+  console.log(`fbsr-prep: ${runName} introduces ${missingVariants.length} variant(s), ${missingRecipes.length} recipe(s), ${missingFilters.length} filter item(s)`);
+
+  const tooling = javaToolingReady();
+  if (!tooling.ok) {
+    console.warn(`fbsr-prep: Java tooling not ready (${tooling.reason}) — leaving store as-is`);
+    console.warn('fbsr-prep: map-prep will skip the missing variants; populate Factorio-FBSR profiles/vanilla and rebuild the jar to backfill');
+    return { status: 'no-tooling', reason: tooling.reason };
+  }
+
+  const variantsPayload = {
+    variants: missingVariants,
+    recipes: missingRecipes,
+    filterItems: missingFilters,
+  };
+  const outDir = resolve(ROOT, 'tools', 'output');
+  mkdirSync(outDir, { recursive: true });
+  const variantsPath = resolve(outDir, `${runName}.variants.json`);
+  const buildPath    = resolve(outDir, `${runName}.sprite-build.json`);
+  writeFileSync(variantsPath, JSON.stringify(variantsPayload, null, 2));
+
+  invokeSpriteEnumerator(variantsPath, buildPath);
+
+  const built = readJson(buildPath);
+  const { metaAdded, spritesAdded } = mergeStore(built.meta ?? {}, built.sprites ?? {});
+  const buildSize = statSync(buildPath).size;
+  console.log(`fbsr-prep: merged ${metaAdded} variant(s) and ${spritesAdded} sprite(s) into the shared store`);
+  console.log(`fbsr-prep: variants payload=${variantsPath}, build output=${buildPath} (${buildSize} bytes)`);
+
+  return { status: 'gap-filled', metaAdded, spritesAdded };
+}
+
+// CLI form.
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  const RUN = process.argv[2];
+  if (!RUN) {
+    console.error('usage: node fbsr-prep.mjs <run-name>');
+    process.exit(1);
+  }
+  const result = ensureSpriteCoverage(RUN);
+  if (result.status === 'no-tooling') process.exit(2);
+}

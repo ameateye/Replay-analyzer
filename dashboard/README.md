@@ -21,6 +21,8 @@ The runs in `src/data/*.json` are committed, so you don't need the extraction pi
 | `npm run build` | `tsc -b && vite build` — production bundle in `dist/` |
 | `npm run preview` | Serve the production bundle locally |
 | `npm run data <run-dir>` | Rebuild `src/data/<run>.json` from raw extracted JSONs and regenerate `src/data/index.ts`. `<run-dir>` is absolute or relative to this directory (e.g. `../extracted-data/My-run`) |
+| `npm test` | Numeric parity (vitest): replays the four converted widgets through the new render-time projection and diffs against the legacy widget series committed at HEAD. Catches drift in the production-cube / stocks pipeline. |
+| `npm run test:visual` | Visual parity (Playwright + pixelmatch): screenshots each phase widget locally and on the published site (`https://ameateye.github.io/Replay-analyzer/`), then pixel-diffs them. Boots `vite dev` automatically. Needs `npx playwright install chromium` once. Set `KEEP_SCREENSHOTS=1` to write the local/published/diff PNGs on every run (not just failures); they land under `e2e/screenshots/` (gitignored). |
 
 ## Layout
 

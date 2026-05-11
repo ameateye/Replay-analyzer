@@ -5,6 +5,11 @@ node_modules/
 dashboard/dist/
 *.tsbuildinfo
 
+# Playwright artifacts (diff PNGs from visual-parity failures + traces/reports)
+dashboard/e2e/screenshots/
+dashboard/playwright-report/
+dashboard/test-results/
+
 # Vite / editor
 .vite/
 .DS_Store
@@ -24,6 +29,9 @@ ad-hoc-analysis/
 
 # Claude Code workspace settings (machine-specific paths)
 .claude/
+
+# Per-user rules for AI coding agents (referenced from CLAUDE.md)
+user.md
 
 
 # Portable JDK + Maven for FBSR build

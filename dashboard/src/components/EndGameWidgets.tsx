@@ -12,6 +12,9 @@ import type { Run } from '../data';
 import { COLORS, FONT, fmtTimeNoSec } from '../theme';
 import { ProductionRow, type ProductionMode } from './ProductionWidget';
 import { ChartTooltip, type TooltipState } from './Tooltip';
+import { useGameData } from '../server/GameDataContext';
+import { buildRecipeRow } from '../lib/recipeRow';
+import type { ProductionCube, StocksDataset } from '../lib/runDatasets';
 import './EndGameWidgets.css';
 
 const W = 1500;
@@ -46,7 +49,31 @@ export function EndGameWidgets({ run }: { run: Run }) {
   const [mode, setMode] = useState<ProductionMode>('rate');
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
-  const eg = run.endGame;
+  const gameData = useGameData();
+
+  // Per-run data redesign step 3: project recipe rows from the cube + stocks
+  // datasets at render time instead of reading the prebuilt run.endGame. The
+  // grid is the cube's native period (5s) — same resolution every other
+  // chart uses — so smoothed line rendering matches the pre-redesign output.
+  const cube = run.production as unknown as ProductionCube;
+  const stocks = run.stocks as unknown as StocksDataset;
+  const period = cube.period;
+  const lastTick = run.durationTicks;
+
+  const gridTicks = useMemo(() => {
+    const arr: number[] = [];
+    for (let t = 0; t <= lastTick; t += period) arr.push(t);
+    return arr;
+  }, [lastTick, period]);
+
+  const minutes = useMemo(() => gridTicks.map(t => +(t / 3600).toFixed(4)), [gridTicks]);
+
+  const recipes = useMemo(
+    () => gameData.recipes.endGameDisplay.map(({ recipe }) =>
+      buildRecipeRow(cube, stocks, { recipe, gridTicks }),
+    ),
+    [cube, stocks, gameData, gridTicks],
+  );
 
   const innerW = W - MARGIN_LEFT - MARGIN_RIGHT;
 
@@ -56,13 +83,13 @@ export function EndGameWidgets({ run }: { run: Run }) {
   // pixel-for-pixel with the overview above (so a vertical line at minute X
   // hits the same x-coordinate in both charts).
   const xScale = useMemo(
-    () => scaleLinear<number>({ domain: [0, eg.durationMin], range: [0, innerW] }),
-    [eg.durationMin, innerW],
+    () => scaleLinear<number>({ domain: [0, run.durationMin], range: [0, innerW] }),
+    [run.durationMin, innerW],
   );
 
-  const totalH = TOP_PAD + eg.recipes.length * ROW_H + (eg.recipes.length - 1) * ROW_GAP + X_AXIS_H + TOP_PAD;
+  const totalH = TOP_PAD + recipes.length * ROW_H + (recipes.length - 1) * ROW_GAP + X_AXIS_H + TOP_PAD;
 
-  const xTickValues = range(0, eg.durationMin + 0.001, 15);
+  const xTickValues = range(0, run.durationMin + 0.001, 15);
 
   return (
     <section className="end-game">
@@ -92,13 +119,13 @@ export function EndGameWidgets({ run }: { run: Run }) {
         <svg viewBox={`0 0 ${W} ${totalH}`} preserveAspectRatio="xMidYMid meet">
           <rect width={W} height={totalH} fill={COLORS.surface} />
 
-          {eg.recipes.map((r, i) => {
+          {recipes.map((r, i) => {
             const top = TOP_PAD + i * (ROW_H + ROW_GAP);
             return (
               <Group key={r.recipe} top={top}>
                 <ProductionRow
                   recipe={r}
-                  minutes={eg.minutes}
+                  minutes={minutes}
                   mode={mode}
                   xScale={xScale}
                   innerW={innerW}
@@ -116,7 +143,7 @@ export function EndGameWidgets({ run }: { run: Run }) {
           {/* Shared x-axis below the last row */}
           <Group
             left={MARGIN_LEFT}
-            top={TOP_PAD + eg.recipes.length * ROW_H + (eg.recipes.length - 1) * ROW_GAP}
+            top={TOP_PAD + recipes.length * ROW_H + (recipes.length - 1) * ROW_GAP}
           >
             <AxisBottom
               scale={xScale}

@@ -58,7 +58,12 @@ function smoothMap(map, halfWindow) {
 // The max is conservative for "potential": it bounds the upper end of what
 // the machine actually achieved. Using max also avoids spurious
 // actual > potential rendering when one estimator under-shoots.
-function computePerRunRates(mpFile, recipe, outputCount, craftTime) {
+// Exported so the production-cube prep can drive its own per-(recipe × phase ×
+// minute) attribution off the same rates `buildProductionSeries` uses. Each
+// emitted `run` carries the original `rBlock` and `machine` references so
+// external callers can look up the rate by reference and access timeBuilt /
+// production samples directly.
+export function computePerRunRates(mpFile, recipe, outputCount, craftTime) {
   const period = mpFile.period;
   const periodSec = period / 60;
 
@@ -80,6 +85,8 @@ function computePerRunRates(mpFile, recipe, outputCount, craftTime) {
         craftingSpeed: r.craftingSpeed ?? 1,
         productivityBonus: r.productivityBonus ?? 0,
         samples,
+        rBlock: r,
+        machine,
       });
     }
   }

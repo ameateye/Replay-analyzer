@@ -9,7 +9,11 @@ import { MixedSegmentWidget } from './MixedSegmentWidget';
 import { FullBuildWidget } from './FullBuildWidget';
 import { EndGameWidgets } from './EndGameWidgets';
 
-type RunDataKey = 'burnerPhase' | 'oilPhase' | 'mixedSegment' | 'fullBuildPhase' | 'endGame';
+// Per-run-data redesign step 4: four of these widgets (Oil / Mixed /
+// Full build / Late game) read from the shared `production` cube +
+// `stocks` dataset at render time. Burner uses minerActivity (its own
+// prep) so it still gates on its own prebuilt field.
+type RunDataKey = 'burnerPhase' | 'production';
 
 export type PhaseWidgetEntry = {
   dataKey: RunDataKey;
@@ -22,11 +26,11 @@ export type PhaseWidgetEntry = {
 };
 
 export const PHASE_WIDGETS: Record<string, PhaseWidgetEntry> = {
-  'Burner':     { dataKey: 'burnerPhase',    Widget: BurnerPhaseWidget,   optionalData: true },
-  'Oil':        { dataKey: 'oilPhase',       Widget: OilPhaseWidget       },
-  'Mixed':      { dataKey: 'mixedSegment',   Widget: MixedSegmentWidget   },
-  'Full build': { dataKey: 'fullBuildPhase', Widget: FullBuildWidget      },
-  'Late game':  { dataKey: 'endGame',        Widget: EndGameWidgets       },
+  'Burner':     { dataKey: 'burnerPhase',    Widget: BurnerPhaseWidget,    optionalData: true },
+  'Oil':        { dataKey: 'production',     Widget: OilPhaseWidget                           },
+  'Mixed':      { dataKey: 'production',     Widget: MixedSegmentWidget                       },
+  'Full build': { dataKey: 'production',     Widget: FullBuildWidget                          },
+  'Late game':  { dataKey: 'production',     Widget: EndGameWidgets                           },
 };
 
 export function hasPhaseWidget(run: Run, name: string): boolean {

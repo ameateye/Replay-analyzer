@@ -87,6 +87,18 @@ export type PlayerTrack = {
   positions: [number, number][];
 };
 
+// One phase boundary on the map's timeline. Matches the (subset of) shape
+// emitted by dashboard/scripts/phase-boundaries.mjs that the player needs —
+// `name`, `startTick`, `endTick` are sufficient for snapping a scrubber to
+// boundaries; `startMin` / `endMin` are derivable. Only present when the
+// chart-side build invoked map-prep inline (build-run-data.mjs); standalone
+// CLI invocations of map-prep omit `phases`.
+export type MapPhase = {
+  name: string;
+  startTick: number | null;
+  endTick: number | null;
+};
+
 export type MapData = {
   runName: string;
   viewBox: [number, number, number, number];
@@ -96,6 +108,7 @@ export type MapData = {
   splitterMarkers?: SplitterMarker[];
   inserterMarkers?: InserterMarker[];
   playerTrack: PlayerTrack | null;
+  phases?: MapPhase[];
 };
 
 // ─── Recipe-icon geometry ─────────────────────────────────────────────

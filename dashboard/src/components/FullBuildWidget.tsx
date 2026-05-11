@@ -2,14 +2,12 @@
 // Recipe-shaped rows on the shared full-run x-axis, sub-tabs grouping rows
 // (Yellow / Purple) so one group renders at a time.
 //
-// Yellow tab: utility-science-pack rate + cumulative — same data the end-game
-// chart shows, surfaced again here in its build-phase context.
-// Purple tab: production-science-pack rate + cumulative, plus its key inputs
-// so the chart shows whether purple is input-limited:
-//   - rail rate (loss bands flag stalls in steel/iron-stick/stone supply)
-//   - electric-furnace rate (loss bands flag stalls in steel/AC/stone-brick)
-//   - productivity-module buffer (chests + player inv)
-//   - steel-plate rate restricted to the back-side furnace stack
+// Per-run data redesign step 3: rows are projected from the cube + stocks
+// at render time, one row per entry in fullBuildDisplay.rows.
+// `machineFilter: 'after-full-build-start'` maps to buildPhases =
+// { 'Full build', 'Late game' } — only machines built once the Full-build
+// phase started count, matching the back-side furnace / late-game line
+// semantics the legacy prep enforced.
 import { useMemo, useRef, useState } from 'react';
 import { Group } from '@visx/group';
 import { scaleLinear } from '@visx/scale';
@@ -17,9 +15,13 @@ import { AxisBottom } from '@visx/axis';
 import { range } from 'd3-array';
 import type { Run } from '../data';
 import { COLORS, FONT, fmtTimeNoSec } from '../theme';
-import { ProductionRow, type ProductionMode, type Recipe } from './ProductionWidget';
+import { ProductionRow } from './ProductionWidget';
 import { ChartTooltip, type TooltipState } from './Tooltip';
 import { useGameData } from '../server/GameDataContext';
+import { buildRecipeRow, buildCombinedRecipeRow, buildFluidBufferRow } from '../lib/recipeRow';
+import type { ProductionCube, StocksDataset } from '../lib/runDatasets';
+import { phasesFrom } from '../lib/phaseSets';
+import type { PhaseRowDisplay, ComponentDisplay } from '../server/gameData';
 import './EndGameWidgets.css';
 
 const W = 1500;
@@ -30,23 +32,71 @@ const ROW_H = 78;
 const ROW_GAP = 6;
 const X_AXIS_H = 32;
 
-// Display meta (label/color/group) is looked up at runtime from gameData.
-type FullBuildRow = Recipe & { key: string; mode: ProductionMode };
-
-type FullBuildPhaseData = {
-  durationMin: number;
-  startMin: number;
-  endMin: number | null;
-  minutes: number[];
-  rows: FullBuildRow[];
-};
+type BuiltRow = { key: string; display: PhaseRowDisplay; row: ReturnType<typeof buildRecipeRow> };
 
 export function FullBuildWidget({ run }: { run: Run }) {
-  const fb = run.fullBuildPhase as FullBuildPhaseData | null | undefined;
   const gameData = useGameData();
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
   const [groupId, setGroupId] = useState<string | null>(null);
+
+  const cube = run.production as unknown as ProductionCube;
+  const stocks = run.stocks as unknown as StocksDataset;
+  const period = cube.period;
+  const lastTick = run.durationTicks;
+
+  const gridTicks = useMemo(() => {
+    const arr: number[] = [];
+    for (let t = 0; t <= lastTick; t += period) arr.push(t);
+    return arr;
+  }, [lastTick, period]);
+
+  const minutes = useMemo(() => gridTicks.map(t => +(t / 3600).toFixed(4)), [gridTicks]);
+
+  const fromFullBuild = useMemo(() => phasesFrom(run.phases, 'Full build'), [run.phases]);
+  const fullBuild = run.phases.find(p => p.name === 'Full build') as
+    | { startMin: number | null; endMin: number | null }
+    | undefined;
+
+  const allBuilt = useMemo<BuiltRow[]>(() => {
+    const cfgRows = gameData.recipes.fullBuildDisplay?.rows ?? [];
+    return cfgRows.map(display => {
+      const buildPhases = display.machineFilter === 'after-full-build-start' ? fromFullBuild : null;
+
+      let row;
+      if (display.mode === 'fluid-buffer') {
+        row = buildFluidBufferRow(stocks, { item: display.recipe, gridTicks });
+      } else if (display.components && display.components.length > 0) {
+        row = buildCombinedRecipeRow(cube, {
+          rowRecipe: display.components[0].recipe,
+          components: display.components.map((c: ComponentDisplay) => ({
+            recipe: c.recipe,
+            buildPhases,
+          })),
+          gridTicks,
+        });
+      } else {
+        row = buildRecipeRow(cube, stocks, {
+          recipe: display.recipe,
+          buildPhases,
+          gridTicks,
+        });
+      }
+      // `excludeInventory` rows track items that flow through the player
+      // inventory but get immediately installed (e.g. prod modules) — the
+      // chest-only count is the meaningful stockpile.
+      if (display.excludeInventory) {
+        row.bufferWithInv = row.buffer.slice();
+        row.peakBufferWithInv = row.peakBuffer;
+      }
+      return { key: display.key, display, row };
+    });
+  }, [cube, stocks, gameData, gridTicks, fromFullBuild]);
+
+  const cfg = gameData.recipes.fullBuildDisplay;
+  const groups = cfg?.groups?.length ? cfg.groups : [{ id: 'purple', label: 'Purple' }];
+  const activeGroup = groupId ?? groups[0].id;
+  const rows = allBuilt.filter(({ display }) => (display.group ?? 'purple') === activeGroup);
 
   const innerW = W - MARGIN_LEFT - MARGIN_RIGHT;
   const xScale = useMemo(
@@ -54,24 +104,14 @@ export function FullBuildWidget({ run }: { run: Run }) {
     [run.durationMin, innerW],
   );
 
-  if (!fb) return null;
-
-  const cfg = gameData.recipes.fullBuildDisplay;
-  const groups = cfg?.groups?.length ? cfg.groups : [{ id: 'purple', label: 'Purple' }];
-  const activeGroup = groupId ?? groups[0].id;
-  const displayByKey = new Map(cfg?.rows?.map(r => [r.key, r]) ?? []);
-  const rows = fb.rows
-    .map(r => ({ row: r, display: displayByKey.get(r.key) }))
-    .filter((entry): entry is { row: FullBuildRow; display: NonNullable<typeof entry.display> } =>
-      entry.display != null && (entry.display.group ?? 'purple') === activeGroup,
-    );
+  if (rows.length === 0 || !fullBuild?.startMin) return null;
 
   const totalH = TOP_PAD + rows.length * ROW_H + Math.max(0, rows.length - 1) * ROW_GAP + X_AXIS_H + TOP_PAD;
   const xTickValues = range(0, run.durationMin + 0.001, 15);
 
-  const rangeText = fb.endMin != null
-    ? `${fmtTimeNoSec(fb.startMin)}–${fmtTimeNoSec(fb.endMin)}`
-    : `from ${fmtTimeNoSec(fb.startMin)}`;
+  const rangeText = fullBuild.endMin != null
+    ? `${fmtTimeNoSec(fullBuild.startMin)}–${fmtTimeNoSec(fullBuild.endMin)}`
+    : `from ${fmtTimeNoSec(fullBuild.startMin)}`;
   const subText = activeGroup === 'yellow'
     ? 'Utility (yellow) science · rate + cumulative'
     : 'Production (purple) science + key inputs · rail · electric furnaces · prod-module buffer · back-side steel';
@@ -108,14 +148,14 @@ export function FullBuildWidget({ run }: { run: Run }) {
         <svg viewBox={`0 0 ${W} ${totalH}`} preserveAspectRatio="xMidYMid meet">
           <rect width={W} height={totalH} fill={COLORS.surface} />
 
-          {rows.map(({ row, display }, i) => {
+          {rows.map(({ key, display, row }, i) => {
             const top = TOP_PAD + i * (ROW_H + ROW_GAP);
             return (
-              <Group key={row.key} top={top}>
+              <Group key={key} top={top}>
                 <ProductionRow
                   recipe={row}
-                  minutes={fb.minutes}
-                  mode={row.mode}
+                  minutes={minutes}
+                  mode={display.mode as 'rate' | 'cum' | 'buffer' | 'fluid-buffer' | 'count' | 'twoLine'}
                   xScale={xScale}
                   innerW={innerW}
                   rowH={ROW_H}

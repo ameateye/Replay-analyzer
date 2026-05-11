@@ -36,10 +36,12 @@ scripts/                   Offline build pipeline (extracted JSONs → src/data/
   build-run-data.mjs         Entrypoint
   lab-saturation-prep.mjs    Per-tick lab saturation
   phase-boundaries.mjs       Strategic build-phase boundary detection (category-specific)
-  end-game-production-prep.mjs
-  oil-phase-prep.mjs
-  full-build-prep.mjs
-  end-game/                  Per-recipe submodules
+  production-cube-prep.mjs   Per-(recipe × buildPhase) production cube
+  stocks-prep.mjs            Per-(item × source) change-event stocks dataset
+  burner-phase-prep.mjs      Burner-phase widget data (minerActivity-based)
+  manual-gathering-prep.mjs  Manual gathering during the burner phase
+  map-prep.mjs + fbsr-prep.mjs  Per-run map payload (separate <run>.map.json)
+  lib/                       Shared helpers (phase-lookup, recipe-row, buffer, …)
 vite.config.ts             Includes a /game-data middleware that mirrors prod paths
 ```
 

@@ -255,13 +255,17 @@ export function MapView({
       setDisplay(byTr[removeCursor.current].idx, false);
       removeCursor.current++;
     }
-    while (buildCursor.current > 0 && byTb[buildCursor.current - 1].tb > tick) {
-      buildCursor.current--;
-      setDisplay(byTb[buildCursor.current].idx, false);
-    }
+    // Backward pass: undo-remove (show) before undo-build (hide), mirroring
+    // the forward order (build before remove). If both passes touch the same
+    // entity in a big backward jump, the undo-build hide must win — otherwise
+    // an entity that was built+removed before `tick` gets revealed.
     while (removeCursor.current > 0 && byTr[removeCursor.current - 1].tr > tick) {
       removeCursor.current--;
       setDisplay(byTr[removeCursor.current].idx, true);
+    }
+    while (buildCursor.current > 0 && byTb[buildCursor.current - 1].tb > tick) {
+      buildCursor.current--;
+      setDisplay(byTb[buildCursor.current].idx, false);
     }
   }, [tick, data, byTb, byTr, entitiesEl]);
 

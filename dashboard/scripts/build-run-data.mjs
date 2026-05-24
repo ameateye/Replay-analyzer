@@ -21,7 +21,9 @@ import { buildProductionCube } from './production-cube-prep.mjs';
 import { buildStocks } from './stocks-prep.mjs';
 import { buildMiners } from './miners-prep.mjs';
 import { buildMapData } from './map-prep.mjs';
-import { ensureSpriteCoverage } from './fbsr-prep.mjs';
+import { buildMergedEntities } from './lib/layout/merge-entities.mjs';
+import { buildFlow } from './flow-prep.mjs';
+import { buildSmelting } from './smelting-prep.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_ROOT = path.resolve(__dirname, '..');
@@ -102,6 +104,29 @@ const manualGathering = burnerWidgetXMaxTick != null
 const production = buildProductionCube(runDir, phases, rocketLaunchTick);
 const stocks = buildStocks(runDir, rocketLaunchTick);
 
+// Build the lossless merged-entity stream once and share it with map-prep
+// and flow-prep so both consume the same upstream slice.
+let merged = null;
+try {
+  merged = buildMergedEntities(runDir, rocketLaunchTick, { externalMiners: miners });
+} catch (err) {
+  console.warn(`  merge-entities: failed (${err?.message ?? err}) — flow/map will rebuild themselves`);
+}
+
+let flow = null;
+try {
+  flow = buildFlow(runDir, rocketLaunchTick, { merged });
+} catch (err) {
+  console.warn(`  flow-prep: failed (${err?.message ?? err}) — flow=null`);
+}
+
+let smelting = null;
+try {
+  smelting = buildSmelting(runDir, rocketLaunchTick, phases, flow);
+} catch (err) {
+  console.warn(`  smelting-prep: failed (${err?.message ?? err}) — smelting=null`);
+}
+
 const output = {
   runName,
   durationTicks: rocketLaunchTick,
@@ -118,6 +143,8 @@ const output = {
   manualGathering,
   production,
   stocks,
+  flow,
+  smelting,
 };
 
 const outDir = path.join(DASHBOARD_ROOT, 'src', 'data');
@@ -177,21 +204,25 @@ if (manualGathering) {
   for (const g of stocks.groups) totalEvents += g.ticks.length;
   console.log(`  stocks: ${stocks.groups.length} groups (${bufN} buffer + ${stocks.groups.length - bufN} inventory, ~${totalEvents} change events) across ${items.size} item(s) (period=${stocks.period})`);
 }
-// Map data is built directly from extracted-data + the shared sprite-meta
-// lookup — no Java FBSR per render, no tools/output/ handoff. Before
-// map-prep, fbsr-prep gap-fills any newly seen variants into the shared
-// store (a no-op when the store already covers the run). Sharing
-// `phases` and `miners` from this build keeps a single source of truth
-// for those datasets between the chart and map sides.
-try {
-  console.log(`  fbsr-prep: checking sprite coverage for ${runName}`);
-  ensureSpriteCoverage(runName);
-} catch (err) {
-  console.warn(`  fbsr-prep: failed (${err?.message ?? err}) — map-prep will skip any missing variants`);
+if (flow) {
+  console.log(`  flow: ${flow.summary.clusterCount} clusters (${JSON.stringify(flow.summary.clustersByKind)}), ${flow.summary.beltSegmentCount} belt segments`);
+} else {
+  console.log('  flow: null (required inputs missing)');
 }
+if (smelting) {
+  console.log(`  smelting: ${smelting.lanes?.length ?? 0} lanes`);
+} else {
+  console.log('  smelting: null');
+}
+// Map data is built event-driven via the Java ReplaySidecar inside
+// map-prep — see docs/specs/fbsr_event_driven_pipeline.md. The sidecar
+// grows game-data/map-sprites.json monotonically as new entity variants
+// appear, so no separate gap-fill step is needed. Sharing `phases` and
+// `miners` from this build keeps a single source of truth for those
+// datasets between the chart and map sides.
 try {
   console.log(`  map-prep: running for ${runName}`);
-  buildMapData(runName, { phases, miners });
+  buildMapData(runName, { phases, miners, merged });
 } catch (err) {
   console.warn(`  map-prep: failed (${err?.message ?? err}) — skipping`);
 }

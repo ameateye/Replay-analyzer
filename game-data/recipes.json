@@ -135,6 +135,7 @@
       { "key": "heavy-oil-buffer",             "group": "oil",          "recipe": "heavy-oil",               "label": "Heavy oil",                  "color": "#c14e1a", "mode": "fluid-buffer" },
       { "key": "light-oil-buffer",             "group": "oil",          "recipe": "light-oil",               "label": "Light oil",                  "color": "#e0a020", "mode": "fluid-buffer" },
       { "key": "petroleum-gas-buffer",         "group": "oil",          "recipe": "petroleum-gas",           "label": "Petroleum gas",              "color": "#b14df5", "mode": "fluid-buffer" },
+      { "key": "solid-fuel-buffer",            "group": "oil",          "recipe": "solid-fuel",              "label": "Solid fuel",                 "color": "#6b6258", "mode": "buffer" },
       { "key": "advanced-circuit-rate",        "group": "rc-modules",   "recipe": "advanced-circuit",        "label": "Red chips (oil-phase line)", "color": "#c8312a", "mode": "rate", "machineFilter": "before-mixed" },
       { "key": "productivity-module-rate",     "group": "rc-modules",   "recipe": "productivity-module",     "label": "Productivity module 1",      "color": "#dd2e6f", "mode": "rate" },
       { "key": "speed-module-cum",             "group": "rc-modules",   "recipe": "speed-module",            "label": "Speed module 1",             "color": "#1d5cb5", "mode": "cum" },

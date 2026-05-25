@@ -81,6 +81,21 @@ export type InserterMarker = {
   ts: InserterEvent[];
 };
 
+// Roboport activity sample. c = bots currently charging on this roboport;
+// w = bots queued waiting for a charger. Roboports aren't in LAYOUT_SCOPE
+// so they're not part of the FBSR-rendered entity layer — the overlay both
+// marks the roboport's position AND visualises its current bot-queue load.
+export type RoboportEvent = { ts: number; c: number; w: number };
+
+export type RoboportMarker = {
+  un: number;          // Factorio unitNumber (roboportUsage.json key)
+  px: number;          // entity center x
+  py: number;
+  tb: number;          // timeBuilt — hides marker before this tick
+  tr?: number;         // timeRemoved — hides marker after this tick
+  ts: RoboportEvent[]; // delta-compressed timeline (only emit on (c, w) change)
+};
+
 export type PlayerTrack = {
   name: string;
   period: number;      // ticks between samples
@@ -107,6 +122,7 @@ export type MapData = {
   recipeMachines: RecipeMachine[];
   splitterMarkers?: SplitterMarker[];
   inserterMarkers?: InserterMarker[];
+  roboportMarkers?: RoboportMarker[];
   playerTrack: PlayerTrack | null;
   phases?: MapPhase[];
 };
@@ -185,6 +201,16 @@ export function splitterStateAt(marker: SplitterMarker, tick: number): SplitterE
 }
 
 export function inserterStateAt(marker: InserterMarker, tick: number): InserterEvent | null {
+  if (marker.tr !== undefined && marker.tr <= tick) return null;
+  const ts = marker.ts;
+  for (let j = ts.length - 1; j >= 0; j--) {
+    if (ts[j].ts <= tick) return ts[j];
+  }
+  return null;
+}
+
+export function roboportStateAt(marker: RoboportMarker, tick: number): RoboportEvent | null {
+  if (tick < marker.tb) return null;
   if (marker.tr !== undefined && marker.tr <= tick) return null;
   const ts = marker.ts;
   for (let j = ts.length - 1; j >= 0; j--) {

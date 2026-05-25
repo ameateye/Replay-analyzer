@@ -186,6 +186,62 @@ function buildOverlays(mapMerged, spriteIds) {
            droppedRecipeEntries, droppedSplitterFilters, droppedInserterFilters };
 }
 
+// Roboport pipeline. Roboports aren't in LAYOUT_SCOPE / entityLayout.json
+// (so merge-entities skips them), but they exist in roboportUsage.json with
+// position + lifecycle + bot-queue samples. We feed them into the FBSR
+// sidecar as synthetic BSEntity records so they render with the real
+// roboport sprite, AND emit a parallel overlay-marker timeline carrying
+// the delta-compressed (charging, waiting) state for the halo overlay.
+function loadRoboports(roboportPath, durationTick) {
+  const j = readJsonOrNull(roboportPath);
+  if (!j?.roboports?.length) return [];
+  const out = [];
+  for (const r of j.roboports) {
+    if (r.timeBuilt == null || r.timeBuilt > durationTick) continue;
+    const tr = (r.timeRemoved != null && r.timeRemoved <= durationTick) ? r.timeRemoved : undefined;
+    out.push({
+      unitNumber: r.unitNumber,
+      x: r.location.x,
+      y: r.location.y,
+      timeBuilt: r.timeBuilt,
+      timeRemoved: tr,
+      usage: r.usage || [],
+    });
+  }
+  return out;
+}
+
+function buildRoboportBSRecords(roboports) {
+  return roboports.map(r => {
+    const rec = {
+      entity_number: r.unitNumber,
+      name: 'roboport',
+      position: { x: r.x, y: r.y },
+      direction: 0,
+      tb: r.timeBuilt,
+    };
+    if (r.timeRemoved !== undefined) rec.tr = r.timeRemoved;
+    return rec;
+  });
+}
+
+function buildRoboportMarkers(roboports, durationTick) {
+  return roboports.map(r => {
+    const ts = [];
+    let prevC = -1, prevW = -1;
+    for (const sample of r.usage) {
+      const [tick, c, w] = sample;
+      if (tick > durationTick) break;
+      if (c === prevC && w === prevW) continue;
+      ts.push({ ts: tick, c, w });
+      prevC = c; prevW = w;
+    }
+    const m = { un: r.unitNumber, px: r.x, py: r.y, tb: r.timeBuilt, ts };
+    if (r.timeRemoved !== undefined) m.tr = r.timeRemoved;
+    return m;
+  });
+}
+
 function buildPlayerTrack(playerPath) {
   const pp = readJsonOrNull(playerPath);
   if (!pp) return null;
@@ -208,6 +264,7 @@ export function buildMapData(runName, { phases = null, miners = null, merged = n
   const spritePath = resolve(ROOT, 'game-data', 'map-sprites.json');
   const rocketPath = resolve(runDir, 'rocketLaunchTime.json');
   const playerPath = resolve(runDir, 'playerPosition.json');
+  const roboportPath = resolve(runDir, 'roboportUsage.json');
 
   if (!existsSync(runDir)) throw new Error(`extracted-data/${runName}/ not found`);
   const tooling = javaToolingReady();
@@ -222,9 +279,13 @@ export function buildMapData(runName, { phases = null, miners = null, merged = n
   const losslessMerged = merged ?? buildMergedEntities(runDir, durationTick, { externalMiners: miners });
   const mapMerged = foldForMap(losslessMerged, durationTick);
 
-  // 2. Synthesise BSEntity records and invoke sidecar.
+  // 2. Synthesise BSEntity records and invoke sidecar. Includes the merged
+  //    layout stream PLUS roboport records synthesised from roboportUsage.json
+  //    (roboports aren't in LAYOUT_SCOPE so they're absent from mapMerged).
+  const roboports = loadRoboports(roboportPath, durationTick);
   const records = [];
   for (const e of losslessMerged) for (const r of explodeEntity(e)) records.push(r);
+  for (const r of buildRoboportBSRecords(roboports)) records.push(r);
 
   const sidecarInput  = resolve(runDir, 'replay-input.json');
   const sidecarOutput = resolve(runDir, 'replay-output.json');
@@ -237,10 +298,17 @@ export function buildMapData(runName, { phases = null, miners = null, merged = n
   const spriteIds  = new Set(Object.keys(sprites));
 
   // 3. un → en bridge so flattened entities[] aligns with overlays-by-en.
+  //    Roboports get en values past mapMerged.length so they don't collide
+  //    with the layout-derived entries.
   const facts = new Map();
   mapMerged.forEach((rec, i) => {
     facts.set(rec.un, {
       en: i + 1, name: rec.name, px: rec.ux, py: rec.uy, tr: rec.tr,
+    });
+  });
+  roboports.forEach((r, i) => {
+    facts.set(r.unitNumber, {
+      en: mapMerged.length + i + 1, name: 'roboport', px: r.x, py: r.y, tr: r.timeRemoved,
     });
   });
 
@@ -304,6 +372,7 @@ export function buildMapData(runName, { phases = null, miners = null, merged = n
 
   // 7. Overlays + playerTrack — same logic as the legacy pipeline.
   const ov = buildOverlays(mapMerged, spriteIds);
+  const roboportMarkers = buildRoboportMarkers(roboports, durationTick);
   const playerTrack = buildPlayerTrack(playerPath);
 
   const out = {
@@ -314,6 +383,7 @@ export function buildMapData(runName, { phases = null, miners = null, merged = n
     recipeMachines:   ov.recipeMachines,
     splitterMarkers:  ov.splitterMarkers,
     inserterMarkers:  ov.inserterMarkers,
+    roboportMarkers,
     playerTrack,
   };
   if (phases && phases.length > 0) out.phases = phases;
@@ -328,6 +398,7 @@ export function buildMapData(runName, { phases = null, miners = null, merged = n
   console.log('recipe machines:', ov.recipeMachines.length, ov.droppedRecipeEntries ? `(${ov.droppedRecipeEntries} recipe events without sprite)` : '');
   console.log('splitter markers:', ov.splitterMarkers.length, ov.droppedSplitterFilters ? `(${ov.droppedSplitterFilters} filter events without sprite)` : '');
   console.log('inserter markers:', ov.inserterMarkers.length, ov.droppedInserterFilters ? `(${ov.droppedInserterFilters} filter events without sprite)` : '');
+  console.log('roboport markers:', roboportMarkers.length, roboports.length ? `(${roboports.length} roboports, ${roboportMarkers.reduce((a,m)=>a+m.ts.length,0)} state events)` : '');
   console.log('player track:', playerTrack ? `${playerTrack.name} (${playerTrack.positions.length} samples @ ${playerTrack.period}t)` : 'none');
   console.log('max build tick:', maxTb, '/ duration tick:', durationTick);
   console.log('phases:', phases?.length ? `${phases.length} embedded` : 'none (standalone invocation)');

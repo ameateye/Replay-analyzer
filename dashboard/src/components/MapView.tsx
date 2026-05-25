@@ -19,6 +19,20 @@ import {
 } from '../lib/mapModel';
 import './MapView.css';
 
+// Roboport overlay: each roboport renders the count of bots queued waiting
+// for a charger as a text label centred on the entity. Charging caps at 4
+// (one per charge pad — always working when non-zero) and isn't shown.
+// Waiting bots is the bottleneck signal, so the label colour shifts from
+// green (no queue) through yellow → red (heavy queue, ~50 bots in this run).
+const ROBOPORT_LABEL_FONT_SIZE = 1.7;  // tiles — large enough to read against the 4×4 roboport sprite
+const ROBOPORT_LABEL_SATURATION_RED_AT = 40;  // waiting count that's fully red on the hue scale
+
+function roboportLabelColor(waiting: number): string {
+  // 0 → green (hue 120); ROBOPORT_LABEL_SATURATION_RED_AT+ → red (hue 0).
+  const hue = Math.max(0, 120 - (waiting * 120) / ROBOPORT_LABEL_SATURATION_RED_AT);
+  return `hsl(${hue} 80% 55%)`;
+}
+
 // Splitter filter icon: 0.5 tiles total (FBSR uses 0.7 — size 0.5 + border
 // 0.1 on each side — but at the dashboard's viewport densities the smaller
 // size reads better against the splitter's belt structure).
@@ -135,6 +149,15 @@ export type MapViewProps = {
   // SVG nodes rendered on top of entities + player marker, in world
   // (tile) coordinates. Pass any number of <g>…</g> elements.
   overlays?: ReactNode;
+  // Optional callback invoked whenever the playback tick changes. Lets
+  // an external host (e.g. the flow visual test) re-evaluate overlays
+  // against the current scrub position. No-op by default — does not
+  // affect production code paths.
+  onTick?: (tick: number) => void;
+  // Optional viewport target. When set (and changed by reference),
+  // MapView pans/zooms so this bbox occupies the centre of the canvas
+  // with ~30% padding. Used by overlay hosts to "go look at this".
+  focusBBox?: { x: number; y: number; w: number; h: number } | null;
 };
 
 export function MapView({
@@ -145,6 +168,8 @@ export function MapView({
   showControls = true,
   fitMode = 'aspect',
   overlays,
+  onTick,
+  focusBBox,
 }: MapViewProps) {
   const [data, setData] = useState<MapData | null>(null);
   const [sprites, setSprites] = useState<SpriteAtlas | null>(null);
@@ -167,6 +192,7 @@ export function MapView({
   const [recipesEl, setRecipesEl]   = useState<SVGGElement | null>(null);
   const [splittersEl, setSplittersEl] = useState<SVGGElement | null>(null);
   const [insertersEl, setInsertersEl] = useState<SVGGElement | null>(null);
+  const [roboportsEl, setRoboportsEl] = useState<SVGGElement | null>(null);
   // Chrome layer: HTML inside canvas-wrap, exposed to overlay components
   // via context so they can portal screen-space elements (legends, etc.)
   // that don't pan/zoom with the map.
@@ -183,6 +209,9 @@ export function MapView({
   // of recipe cursor — splitters / inserters live in their own arrays.
   const lastSplitterIdx = useRef(new Map<number, number>());
   const lastInserterIdx = useRef(new Map<number, number>());
+  // Roboport state cursor: tracks last applied event index per marker (by
+  // unitNumber, since roboport markers don't carry `en`).
+  const lastRoboportIdx = useRef(new Map<number, number>());
 
   // Fetch map data + sprites in parallel.
   useEffect(() => {
@@ -210,7 +239,25 @@ export function MapView({
     lastRecipeIdx.current.clear();
     lastSplitterIdx.current.clear();
     lastInserterIdx.current.clear();
+    lastRoboportIdx.current.clear();
   }, [data, initialTick]);
+
+  // External focus: when an overlay host wants to "go look at X", it
+  // passes a focusBBox; we centre that bbox in the canvas with ~30%
+  // padding. Re-runs only on focusBBox reference change so the user
+  // can manually pan/zoom without us yanking them back.
+  useEffect(() => {
+    if (!focusBBox || !data) return;
+    const minSide = 8;            // never zoom in tighter than ~8 tiles
+    const w = Math.max(focusBBox.w, minSide);
+    const h = Math.max(focusBBox.h, minSide);
+    const pad = 0.35;
+    const fullW = w * (1 + pad * 2);
+    const fullH = h * (1 + pad * 2);
+    const cx = focusBBox.x + focusBBox.w / 2;
+    const cy = focusBBox.y + focusBBox.h / 2;
+    setVb({ x: cx - fullW / 2, y: cy - fullH / 2, w: fullW, h: fullH });
+  }, [focusBBox, data]);
 
   // DOM order = visual stack (layer/Y/X) set by map-prep. The cursors walk
   // in time order, so we precompute byTb / byTr separately, each entry
@@ -234,6 +281,7 @@ export function MapView({
   const recipeMachines = useMemo(() => data?.recipeMachines ?? [], [data]);
   const splitterMarkers = useMemo(() => data?.splitterMarkers ?? [], [data]);
   const inserterMarkers = useMemo(() => data?.inserterMarkers ?? [], [data]);
+  const roboportMarkers = useMemo(() => data?.roboportMarkers ?? [], [data]);
 
   // Apply tick changes incrementally to the DOM. Re-runs when the
   // container element attaches (via callback ref → state), so the
@@ -404,6 +452,41 @@ export function MapView({
       }
     }
   }, [tick, data, sprites, inserterMarkers, insertersEl]);
+
+  // Roboport waiting-bot label: per marker, one <text>. Walks the timeline
+  // back to the active state, updates text content + colour. Hidden before
+  // tb / after tr. Charging count isn't shown — it caps at 4 and just means
+  // "the roboport is working"; only the waiting count signals a bottleneck.
+  useEffect(() => {
+    const container = roboportsEl;
+    if (!container || !data) return;
+    for (let i = 0; i < roboportMarkers.length; i++) {
+      const m = roboportMarkers[i];
+      let curIdx = -1;
+      const alive = tick >= m.tb && (m.tr === undefined || tick < m.tr);
+      if (alive) {
+        for (let j = m.ts.length - 1; j >= 0; j--) {
+          if (m.ts[j].ts <= tick) { curIdx = j; break; }
+        }
+      }
+      const prevIdx = lastRoboportIdx.current.get(m.un);
+      if (prevIdx === curIdx) continue;
+      lastRoboportIdx.current.set(m.un, curIdx);
+      const el = container.children[i] as SVGTextElement | undefined;
+      if (!el) continue;
+      if (curIdx < 0) { el.style.display = 'none'; continue; }
+      const w = m.ts[curIdx].w;
+      el.textContent = String(w);
+      el.setAttribute('fill', roboportLabelColor(w));
+      el.style.display = '';
+    }
+  }, [tick, data, roboportMarkers, roboportsEl]);
+
+  // Tick notification for external hosts (e.g. flow visual test).
+  // No-op when onTick isn't passed.
+  useEffect(() => {
+    if (onTick) onTick(tick);
+  }, [tick, onTick]);
 
   // Playback loop
   useEffect(() => {
@@ -636,6 +719,30 @@ export function MapView({
     ));
   }, [data, inserterMarkers]);
 
+  // Roboport label nodes — one <text> per roboport, initially hidden. The
+  // effect above sets textContent + fill per tick. Black stroke + paint-
+  // order:stroke gives a halo so the number reads against the multi-colour
+  // roboport sprite without depending on background contrast.
+  const roboportMarkerNodes = useMemo(() => {
+    if (!data) return null;
+    return roboportMarkers.map(m => (
+      <text
+        key={m.un}
+        x={m.px}
+        y={m.py}
+        fontSize={ROBOPORT_LABEL_FONT_SIZE}
+        fontWeight="bold"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill="hsl(120 80% 55%)"
+        stroke="#000"
+        strokeWidth={0.22}
+        paintOrder="stroke"
+        style={{ display: 'none' }}
+      />
+    ));
+  }, [data, roboportMarkers]);
+
   // Player marker — current interpolated position
   const playerPos = useMemo(() => {
     if (!data?.playerTrack) return null;
@@ -712,6 +819,8 @@ export function MapView({
           <g ref={setSplittersEl} id="run-map-splitters" pointerEvents="none">{splitterMarkerNodes}</g>
           <g ref={setInsertersEl} id="run-map-inserters" pointerEvents="none">{inserterMarkerNodes}</g>
           <g ref={setRecipesEl} id="run-map-recipes" pointerEvents="none">{recipeUses}</g>
+          {/* Roboport labels render LAST so the waiting count sits on top of the sprite + recipe icons. */}
+          <g ref={setRoboportsEl} id="run-map-roboports" pointerEvents="none">{roboportMarkerNodes}</g>
           {playerPos && (
             <g className="run-map-player-marker" pointerEvents="none">
               <circle cx={playerPos[0]} cy={playerPos[1]} r={0.7} className="run-map-player-halo" />

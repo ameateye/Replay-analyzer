@@ -1,15 +1,9 @@
-// Per-run FBSR map data lives next to the per-run summary JSONs but is
-// emitted as a Vite asset (?url) instead of bundled — multi-MB per run, only
-// fetched when RunMapPlayer is open. `import.meta.glob` resolves at build
-// time and produces hashed asset URLs (better cache busting than the old
-// public/map-data/ static path).
+import { runMetas, mapUrlForMeta } from './index';
 
-const mapUrls = import.meta.glob('./*.map.json', {
-  query: '?url',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
-
+// Per-run map sidecar URL. Resolved through the manifest so the same lookup
+// works for in-repo (relative URL under BASE_URL) and externally hosted runs
+// (absolute URL in the manifest entry).
 export function mapUrlFor(runName: string): string | null {
-  return mapUrls[`./${runName}.map.json`] ?? null;
+  const meta = runMetas.find(m => m.name === runName);
+  return meta ? mapUrlForMeta(meta) : null;
 }

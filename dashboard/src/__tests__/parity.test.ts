@@ -68,9 +68,19 @@ function readLegacyJson(runName: string): any {
 
 function readCurrentJson(runName: string): any {
   return JSON.parse(
-    fs.readFileSync(path.join(DASHBOARD_ROOT, 'src', 'data', `${runName}.json`), 'utf8'),
+    fs.readFileSync(path.join(REPO_ROOT, 'built-data', `${runName}.json`), 'utf8'),
   );
 }
+
+// The dashboard's per-run JSONs no longer live in the repo — they're either
+// in built-data/ (a fresh local build, gitignored) or hosted externally
+// (e.g. R2). The parity check needs file-level access to current-vs-legacy
+// JSON for the same set of runs, so it skips when built-data/ isn't
+// populated. Re-enable by running `npm run data ../extracted-data/<run>`
+// for each run in RUNS.
+const HAVE_BUILT_DATA = RUNS.every(r =>
+  fs.existsSync(path.join(REPO_ROOT, 'built-data', `${r}.json`))
+);
 
 // Use the legacy-pinned recipes.json so the display config matches the
 // pipeline that produced the legacy widget fields. Working-tree recipes.json
@@ -214,7 +224,7 @@ beforeAll(() => {
   };
 });
 
-describe.each(RUNS)('Run %s', (runName) => {
+(HAVE_BUILT_DATA ? describe.each(RUNS) : describe.skip.each(RUNS))('Run %s', (runName) => {
   let legacy: any;
   let current: any;
   let cube: ProductionCube;

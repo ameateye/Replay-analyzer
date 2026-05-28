@@ -13,7 +13,7 @@
 //     from the lossless merged stream (same logic as the legacy pipeline)
 //   + playerTrack from playerPosition.json
 //   ↓
-//   dashboard/src/data/<run>.map.json
+//   built-data/<run>.map.json   (repo-root sibling, gitignored)
 //
 // Atlas accumulation is monotonic into game-data/map-sprites.json — the
 // sidecar's FileAtlasSink appends new hex sids per run and never rewrites
@@ -259,7 +259,7 @@ function buildPlayerTrack(playerPath) {
 
 export function buildMapData(runName, { phases = null, miners = null, merged = null } = {}) {
   const runDir     = resolve(ROOT, 'extracted-data', runName);
-  const outDir     = resolve(ROOT, 'dashboard', 'src', 'data');
+  const outDir     = resolve(ROOT, 'built-data');
   const outPath    = resolve(outDir, `${runName}.map.json`);
   const spritePath = resolve(ROOT, 'game-data', 'map-sprites.json');
   const rocketPath = resolve(runDir, 'rocketLaunchTime.json');

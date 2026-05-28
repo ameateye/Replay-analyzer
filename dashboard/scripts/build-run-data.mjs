@@ -1,8 +1,10 @@
 // Offline data build for the dashboard.
 //
 // Reads the raw extracted JSONs for a run, computes the derived series the
-// dashboard needs, and writes a compact JSON to src/data/<run>.json. Run
-// before dev / build (npm scripts wire it).
+// dashboard needs, and writes a compact JSON to built-data/<run>.json at
+// the repo root (gitignored). A separate `npm run install:local` /
+// `install:url` step decides what to do with the built artifact — copy it
+// into dashboard/public/data/ or register an external URL in the manifest.
 //
 // Game-data (tech icons, tech requirements) is intentionally NOT baked in:
 // it lives behind /game-data/* and is loaded once at runtime by the React app
@@ -147,34 +149,10 @@ const output = {
   smelting,
 };
 
-const outDir = path.join(DASHBOARD_ROOT, 'src', 'data');
+const outDir = path.join(REPO_ROOT, 'built-data');
 fs.mkdirSync(outDir, { recursive: true });
 const outPath = path.join(outDir, `${runName}.json`);
 fs.writeFileSync(outPath, JSON.stringify(output));
-
-// Regenerate the run-index. Lists every <name>.json in src/data/ ordered by
-// most-recently-built first, so the freshly-built run becomes the default
-// without any extra step. App.tsx exposes a picker over `runs[]`.
-// Only the per-run summary JSONs participate in the bundle. Per-run map data
-// (`<run>.map.json`) is fetched at runtime via Vite ?url imports — see
-// `maps.ts` — and must be excluded here.
-const allJsons = fs.readdirSync(outDir)
-  .filter(n => n.endsWith('.json') && !n.endsWith('.map.json'))
-  .map(n => ({ name: n, mtime: fs.statSync(path.join(outDir, n)).mtimeMs }))
-  .sort((a, b) => b.mtime - a.mtime)
-  .map(e => e.name.replace(/\.json$/, ''));
-
-// JSON imports preserve literal types per file, so runs have nominally
-// distinct types even though their structural shape is identical. Anchor the
-// shared `Run` type on the first (newest) run and cast the others through
-// `unknown` so consumers see a single Run type.
-const indexPath = path.join(outDir, 'index.ts');
-const imports = allJsons.map((n, i) => `import r${i} from './${n}.json';`).join('\n');
-const items = allJsons.map((_, i) => i === 0 ? 'r0' : `r${i} as unknown as Run`).join(', ');
-fs.writeFileSync(
-  indexPath,
-  `${imports}\n\nexport type Run = typeof r0;\nexport const runs: Run[] = [${items}];\nexport const defaultRun = runs[0];\n`,
-);
 
 const sizeKB = (fs.statSync(outPath).size / 1024).toFixed(1);
 console.log(`  labs: ${perMinute.length} samples, ${idleBands.length} idle bands · research: ${research.length} intervals`);

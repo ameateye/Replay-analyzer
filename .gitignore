@@ -5,6 +5,11 @@ node_modules/
 dashboard/dist/
 *.tsbuildinfo
 
+# Built per-run data (npm run data <X> output). Whether it's published to
+# external storage or copied into dashboard/public/data/ via npm run install:*
+# is the operator's choice; the intermediate build artifacts stay local.
+built-data/
+
 # Playwright artifacts (diff PNGs from visual-parity failures + traces/reports)
 dashboard/e2e/screenshots/
 dashboard/playwright-report/

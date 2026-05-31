@@ -100,6 +100,15 @@ export function buildMergedEntities(runDir, durationTick, { externalMiners } = {
   const layout = readJson(resolve(runDir, 'entityLayout.json'));
   for (const e of layout.entities) {
     if (!LAYOUT_SCOPE.has(e.name)) continue;
+    // Belt-category ghosts (entityLayout schema >= 4) are tracked by the
+    // collector so a cancelled/revived ghost emits a corrective mutation on the
+    // REAL neighbours it was wired to (dropping the stale belt-graph reference).
+    // That correction lives on the real belts' mutation timelines, so by the
+    // time the stream reaches here we no longer need the ghost records: a ghost
+    // moves no items, and including them would mint phantom belt segments and
+    // empty sideload lanes. Drop them at this single choke point — propagates to
+    // flow-prep and map-prep alike.
+    if (e.ghost) continue;
     const isBelt     = e.category === 'belt';
     const isSplitter = e.name.endsWith('splitter');
     const isInserter = INSERTER_NAMES.has(e.name);

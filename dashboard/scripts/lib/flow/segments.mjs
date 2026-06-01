@@ -21,22 +21,20 @@
 // before and after. (entity includes oldUnit on a replace.) No reverse scan.
 //
 // No geometry: same-segment is read straight off each belt's captured
-// beltInputs / beltOutputs / undergroundPair, so this module imports nothing
-// from lib/flow/. The old geometric model is kept as segments-old.mjs.
+// beltInputs / beltOutputs / undergroundPair, so its classification imports
+// nothing from lib/flow/ (only the shared state container, see state.mjs). The
+// old geometric model is kept as segments-old.mjs.
+
+import { createFlowState } from './state.mjs';
 
 // 'belt' category tag. TODO(refactor): source entity-name constants from the
 // game-data payload rather than hardcoding — see docs/refactors/segments-edge-rewrite.md.
 const BELT_CATEGORY = 'belt';
 
-export function createState() {
-  return {
-    belts: new Map(),            // unit → folded belt entity rec
-    segOf: new Map(),            // unit → live segment id
-    segs:  new Map(),            // segment id → live segment record
-    retired: [],                 // segments closed by merge / split / death
-    nextSeg: 0,
-  };
-}
+// State now lives in the shared flow-state container (state.mjs). Re-exported
+// so existing callers (the _diagnostics parity tools) keep working unchanged;
+// flow-prep imports createFlowState directly.
+export { createFlowState as createState };
 
 function toSet(v) {
   if (Array.isArray(v)) return new Set(v);

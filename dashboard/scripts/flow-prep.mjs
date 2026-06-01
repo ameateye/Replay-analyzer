@@ -21,6 +21,7 @@
 import { existsSync } from 'node:fs';
 
 import { buildMergedEntities } from './lib/layout/merge-entities.mjs';
+import { createFlowState } from './lib/flow/state.mjs';
 import * as segments from './lib/flow/segments.mjs';
 
 // Floor a captured entity location to its tile origin. Inlined — the flow
@@ -34,7 +35,7 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
   const mergedStream = merged ?? buildMergedEntities(runDir, durationTick);
   if (!mergedStream || mergedStream.length === 0) return null;
 
-  const segState = segments.createState();
+  const segState = createFlowState();
 
   const events = _synthesiseEvents(mergedStream, durationTick);
 

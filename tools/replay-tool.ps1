@@ -30,6 +30,10 @@
       clean <save>              Delete a save from the Factorio saves folder. <save> can be
                                 a filename (with or without .zip) or a glob. The original
                                 save in externalSavesFolder is never touched.
+      version [save]            Print a Factorio version as "major.minor.patch". With no
+                                arg, the installed binary's version; with a save (external
+                                folder), the version that save was created in. Used to
+                                group saves before a branch swap (--run-replay needs a match).
       list-saves [pat]          List zip files in externalSavesFolder, optionally filtered.
       list-installed            List saves currently in the Factorio saves folder.
       config                    Print the resolved configuration.
@@ -59,7 +63,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('install', 'build', 'playback', 'extract', 'process', 'run', 'clean', 'list-saves', 'list-installed', 'config', 'help')]
+    [ValidateSet('install', 'build', 'playback', 'extract', 'process', 'run', 'clean', 'version', 'list-saves', 'list-installed', 'config', 'help')]
     [string]$Command = 'help',
 
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
@@ -231,6 +235,59 @@ function Get-SaveInternalFolder {
     } finally {
         $archive.Dispose()
     }
+}
+
+function Get-SaveFactorioVersion {
+    <#
+        Read the Factorio version a save was created in. The save's level-init.dat
+        opens with the map version header: three little-endian uint16s
+        (major, minor, patch). This is the version --run-replay must match, so the
+        replay-processing skill reads it to group saves before swapping branches.
+    #>
+    param([string]$ZipPath)
+
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $entry = $archive.Entries | Where-Object { $_.FullName -match '/level-init\.dat$' } | Select-Object -First 1
+        if (-not $entry) { throw "No level-init.dat in $ZipPath (not a Factorio save?)" }
+        $stream = $entry.Open()
+        try {
+            $buf = New-Object byte[] 6
+            if ($stream.Read($buf, 0, 6) -lt 6) { throw "level-init.dat too short in $ZipPath" }
+            $major = [BitConverter]::ToUInt16($buf, 0)
+            $minor = [BitConverter]::ToUInt16($buf, 2)
+            $patch = [BitConverter]::ToUInt16($buf, 4)
+            return "$major.$minor.$patch"
+        } finally {
+            $stream.Close()
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
+function Get-InstalledFactorioVersion {
+    param([object]$Config)
+    $binary = Resolve-FactorioBinary -Config $Config
+    $first  = & $binary --version 2>&1 | Select-Object -First 1
+    if ($first -match 'Version:\s*(\d+\.\d+\.\d+)') { return $Matches[1] }
+    return "$first"
+}
+
+function Invoke-Version {
+    <#
+        No save arg  -> the installed Factorio binary's version.
+        With a save  -> the Factorio version that save was created in.
+        Prints a bare "major.minor.patch" so callers can capture it directly.
+    #>
+    param([string]$SaveArg, [object]$Config)
+
+    if ([string]::IsNullOrWhiteSpace($SaveArg)) {
+        Write-Output (Get-InstalledFactorioVersion -Config $Config)
+        return
+    }
+    $sourceZip = Resolve-SaveInput -InputArg $SaveArg -ExternalSavesFolder $Config.externalSavesFolder
+    Write-Output (Get-SaveFactorioVersion -ZipPath $sourceZip)
 }
 
 function Invoke-Install {
@@ -576,6 +633,7 @@ try {
         'process'        { Invoke-Process -Name $Args[0] -SaveToClean $Args[1] -Config $cfg }
         'run'            { Invoke-Run -ExternalSaveArg $Args[0] -Name $Args[1] -Config $cfg }
         'clean'          { Invoke-Clean -SaveArg $Args[0] -Config $cfg }
+        'version'        { Invoke-Version -SaveArg ($Args | Select-Object -First 1) -Config $cfg }
         'list-saves'     { Invoke-ListSaves -Pattern $Args[0] -Config $cfg }
         'list-installed' { Invoke-ListInstalled -Config $cfg }
         'config'         { $cfg | Format-List }

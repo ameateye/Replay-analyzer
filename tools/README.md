@@ -119,8 +119,22 @@ The dashboard's [RunMapPlayer.tsx](../dashboard/src/components/RunMapPlayer.tsx)
 
 | File | Purpose |
 |---|---|
-| [replay-tool.ps1](replay-tool.ps1) | Windows wrapper for the data-collection-layer side (inject control.lua, extract, clean). Doesn't currently cover the FBSR step. |
+| [replay-tool.ps1](replay-tool.ps1) | Windows wrapper for the data-collection-layer side: inject control.lua, headless playback, extract, build, clean. Also `version [save]` — installed-Factorio or per-save version, for grouping before a branch swap. |
+| [process-batch.ps1](process-batch.ps1) | Sequential batch runner over a list of saves — `-Mode full` (build) or `-Mode extract` (extractions only), per-run failure isolation + logs in `$env:TEMP\replay-batch\`. Version-agnostic; the caller groups + swaps. See the **replay-processing** skill. |
+| [steam-swap-to.ps1](steam-swap-to.ps1) | Headless Factorio branch swap (`-Branch 2.0.x`) via the appmanifest BetaKey edit + `steam://validate` cooldown bypass. Backs the **steam-version-swap** skill. |
 | [fbsr-prep.mjs](fbsr-prep.mjs) | `extracted-data/<run>/` → `output/<run>.{json,timing.json}`. |
 | [bp-export.mjs](bp-export.mjs) | Smoke test — generates a tiny sample blueprint to validate the FBSR install before running on a real run. |
 | `output/` | FBSR build outputs + the synthetic-blueprint inputs. Gitignored. |
 | `jdk21/`, `maven/`, `dl/` | Portable toolchain + download stash. All gitignored. |
+
+## Processing replays (single & batch)
+
+Day-to-day replay processing — one run or a version-grouped batch, with the
+Factorio-version-match-then-swap flow — is documented in the **replay-processing**
+skill (`.claude/skills/replay-processing/SKILL.md`). Quick reference:
+
+```powershell
+./tools/replay-tool.ps1 version "Actual DS 2_16_34.zip"   # → 2.0.77 (group by this)
+./tools/replay-tool.ps1 run "DS 2_09_42.zip" DS-2_09_42   # one run, full build
+./tools/process-batch.ps1 -Mode extract -Runs "a.zip=DS-A","b.zip=DS-B"
+```

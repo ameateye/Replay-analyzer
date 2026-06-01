@@ -1,0 +1,337 @@
+// segments.mjs — edge-based belt-segment lifecycle (replaces segments-old.mjs).
+//
+// Two responsibilities, cleanly split:
+//   1. Belt state + classification (applyEvent / sameSegmentNeighbours) — take an
+//      event, update `state.belts` (one map: unit → folded belt rec), return the
+//      dirty mark, and classify same-segment neighbours straight from the
+//      captured edges. No tile index, no reverse index, no plans.
+//   2. Segment lifecycle (reconcile / finalize) — maintain live segments over
+//      time. The CALLER owns ticks: apply a whole tick's events (accumulating
+//      their dirty units), then call reconcile() ONCE for that tick. This module
+//      never groups events itself.
+//
+// SAME-SEGMENT (edges alone, no geometry): two belts are same-segment iff joined
+// by a STRAIGHT (feeder and consumer face the same way) or a CORNER (perpendicular,
+// consumer has a single input), OR they are an underground-belt pair. Splitters
+// are their own segment and count toward a consumer's input total. The corner-vs-
+// sideload split is just `consumer.beltInputs.size < 2`. UG pairs are read from
+// each belt's own `undergroundPair` (symmetric in the data → no reverse index).
+//
+// DIRTY MARK — the event's entity plus everything in its inputs and outputs,
+// before and after. (entity includes oldUnit on a replace.) No reverse scan.
+//
+// No geometry: same-segment is read straight off each belt's captured
+// beltInputs / beltOutputs / undergroundPair, so this module imports nothing
+// from lib/flow/. The old geometric model is kept as segments-old.mjs.
+
+// 'belt' category tag. TODO(refactor): source entity-name constants from the
+// game-data payload rather than hardcoding — see docs/refactors/segments-edge-rewrite.md.
+const BELT_CATEGORY = 'belt';
+
+export function createState() {
+  return {
+    belts: new Map(),            // unit → folded belt entity rec
+    segOf: new Map(),            // unit → live segment id
+    segs:  new Map(),            // segment id → live segment record
+    retired: [],                 // segments closed by merge / split / death
+    nextSeg: 0,
+  };
+}
+
+function toSet(v) {
+  if (Array.isArray(v)) return new Set(v);
+  if (v instanceof Set) return new Set(v);
+  return new Set();
+}
+
+// The folded rec, field-for-field identical to the frozen _addBelt.
+function addBelt(belts, e) {
+  belts.set(e.unit, {
+    unit: e.unit,
+    name: e.name,
+    beltType: e.beltType,
+    direction: e.direction ?? 0,
+    location: e.location,
+    beltToGroundType: e.beltToGroundType ?? null,
+    undergroundPair: e.undergroundPair ?? null,
+    beltInputs: toSet(e.beltInputs),
+    beltOutputs: toSet(e.beltOutputs),
+    splitterFilter: e.splitterFilter ?? null,
+    splitterInputPriority: e.splitterInputPriority ?? null,
+    splitterOutputPriority: e.splitterOutputPriority ?? null,
+  });
+}
+
+// Dirty = entity + its inputs + its outputs, before and after. No reverse scan.
+function dirtyMark(belts, e) {
+  const d = new Set();
+  for (const u of [e.unit, e.oldUnit, e.newUnit]) {   // entity (old+new on replace)
+    if (u == null) continue;
+    d.add(u);
+    const b = belts.get(u);                   // before
+    if (b) {
+      for (const x of b.beltInputs)  d.add(x);
+      for (const x of b.beltOutputs) d.add(x);
+      if (b.undergroundPair) d.add(b.undergroundPair);
+    }
+  }
+  for (const x of toSet(e.beltInputs))  d.add(x);   // after
+  for (const x of toSet(e.beltOutputs)) d.add(x);
+  if (e.undergroundPair) d.add(e.undergroundPair);
+  return d;
+}
+
+// Apply one event: compute dirty (before mutating), then update belts. Pure
+// belt-state + dirty mark — NO segment lifecycle. The caller accumulates dirty
+// across a tick's events and calls reconcile() once per tick.
+export function applyEvent(state, e) {
+  if (e.category !== BELT_CATEGORY) return null;
+  const belts = state.belts;
+  const dirty = dirtyMark(belts, e);
+  switch (e.type) {
+    case 'entity-built':
+      addBelt(belts, e);
+      break;
+    case 'entity-removed':
+      belts.delete(e.unit);
+      break;
+    case 'entity-mutated': {
+      const b = belts.get(e.unit);
+      if (!b) return null;
+      if (e.direction        !== undefined) b.direction = e.direction;
+      if (e.beltToGroundType !== undefined) b.beltToGroundType = e.beltToGroundType;
+      if (e.undergroundPair  !== undefined) b.undergroundPair = e.undergroundPair;
+      if (e.beltInputs       !== undefined) b.beltInputs = toSet(e.beltInputs);
+      if (e.beltOutputs      !== undefined) b.beltOutputs = toSet(e.beltOutputs);
+      if (e.splitterFilter         !== undefined) b.splitterFilter = e.splitterFilter;
+      if (e.splitterInputPriority  !== undefined) b.splitterInputPriority = e.splitterInputPriority;
+      if (e.splitterOutputPriority !== undefined) b.splitterOutputPriority = e.splitterOutputPriority;
+      break;
+    }
+    case 'entity-replaced':
+      addBelt(belts, { ...e, unit: e.newUnit });
+      belts.delete(e.oldUnit);
+      break;
+  }
+  return dirty;
+}
+
+// Same-segment neighbours of `unit`, derived purely from edges + attributes.
+// Symmetric by construction at a SETTLED graph: an edge feeder→consumer is judged
+// the same from either end (both test the consumer's direction match / input
+// count). (Mid-tick, a captured edge can be transiently one-sided — which is why
+// reconcile runs once per tick on the settled graph, not per event.)
+export function sameSegmentNeighbours(belts, unit) {
+  const out = new Set();
+  const u = belts.get(unit);
+  if (!u) return out;
+  if (u.undergroundPair && belts.has(u.undergroundPair)) out.add(u.undergroundPair);
+  // A splitter is its own segment — never same-segment with a belt neighbour.
+  if (u.beltType === 'splitter') return out;
+  for (const v of u.beltInputs) {        // v feeds u → u is the consumer
+    if (!belts.has(v)) continue;
+    const feeder = belts.get(v);
+    if (feeder.beltType === 'splitter') continue;
+    if (feeder.direction === u.direction) { out.add(v); continue; }   // straight (incl. into a UG)
+    if (!isUg(u) && u.beltInputs.size < 2) out.add(v);            // corner — never INTO a UG
+  }
+  for (const v of u.beltOutputs) {       // u feeds v → v is the consumer
+    const consumer = belts.get(v);
+    if (!consumer) continue;
+    if (consumer.beltType === 'splitter') continue;
+    if (u.direction === consumer.direction) { out.add(v); continue; } // straight (incl. into a UG)
+    if (!isUg(consumer) && consumer.beltInputs.size < 2) out.add(v); // corner — never INTO a UG
+  }
+  return out;
+}
+
+// Perpendicular feed onto an underground belt is always a sideload, never a
+// corner — the UG's orientation is fixed (docs/factorio-knowledge/ug-sideload-rule.md).
+const isUg = (b) => b.beltType === 'underground-belt';
+
+// Flood-fill the same-segment relation over every belt currently in the map.
+// Returns an array of component Sets (the partition oracle — used to validate
+// the incrementally-maintained segments).
+export function components(belts) {
+  const seen = new Set();
+  const comps = [];
+  for (const seed of belts.keys()) {
+    if (seen.has(seed)) continue;
+    const comp = new Set();
+    const stack = [seed];
+    while (stack.length) {
+      const u = stack.pop();
+      if (seen.has(u)) continue;
+      seen.add(u);
+      comp.add(u);
+      for (const n of sameSegmentNeighbours(belts, u)) if (!seen.has(n)) stack.push(n);
+    }
+    comps.push(comp);
+  }
+  return comps;
+}
+
+// ── segment lifecycle ────────────────────────────────────────
+// reconcile(state, dirty, tick) maintains live segments off the edge oracle.
+// The CALLER drives it: apply a whole tick's events (accumulating their dirty
+// units), then call reconcile ONCE for that tick. Reconciling a settled graph —
+// not one mid-update — is what avoids the transiently one-sided edge (a partner's
+// reciprocal edge lands later in the same tick), so a plain directed flood
+// suffices; no symmetrization. The module owns no tick state.
+//   Per dirty unit: gone from belts → leave its segment (mark for split); still
+//   present and in a segment → mark its segment for split (a rotation may cut it).
+//   SPLIT — recompute each touched segment's components; largest keeps the id,
+//     the rest peel off as fresh segments.
+//   MERGE — each present dirty belt joins its neighbours' segment, unifying
+//     several if it bridges them (earliest tb wins, ties → lower id).
+// Each segment records, scoped to its own id: per-member tile occupancy (tb/tr),
+// merge/split/birth/death lineage, and (splitters) a state timeline.
+
+const isSplitter = (b) => b.beltType === 'splitter';
+
+// Tiles a belt occupies: splitter = 2 (perpendicular to facing), else 1.
+function tilesFor(b) {
+  const x = b.location.x, y = b.location.y, d = b.direction ?? 0;
+  if (!isSplitter(b)) return [{ x: Math.floor(x), y: Math.floor(y), direction: d }];
+  let ax = 0, ay = 0, bx = 0, by = 0;
+  if (d === 0) { ax = -0.5; bx = 0.5; } else if (d === 4) { ay = -0.5; by = 0.5; }
+  else if (d === 8) { ax = 0.5; bx = -0.5; } else if (d === 12) { ay = 0.5; by = -0.5; }
+  return [{ x: Math.floor(x + ax), y: Math.floor(y + ay), direction: d },
+          { x: Math.floor(x + bx), y: Math.floor(y + by), direction: d }];
+}
+
+function join(state, seg, u, tick) {        // u enters seg → open its tile occupancy here
+  seg.members.add(u);
+  state.segOf.set(u, seg.id);
+  const b = state.belts.get(u);
+  if (b) seg.tiles.set(u, { xy: tilesFor(b), tb: tick });
+}
+
+function leave(state, seg, u, tick) {       // u exits seg → close occupancy (entry kept for geometry)
+  seg.members.delete(u);
+  if (state.segOf.get(u) === seg.id) state.segOf.delete(u);
+  const t = seg.tiles.get(u);
+  if (t && t.tr == null) t.tr = tick;
+}
+
+// Append a splitter state, skipping a no-op repeat of the last logged one.
+function appendSplitter(seg, b, tick) {
+  if (!seg || seg.kind !== 'splitter') return;
+  const list = (seg.splitterStates ??= []);
+  const last = list[list.length - 1];
+  const filter = b.splitterFilter ?? null, ip = b.splitterInputPriority ?? null,
+        op = b.splitterOutputPriority ?? null, dir = b.direction;
+  if (last && last.filter === filter && last.inputPriority === ip && last.outputPriority === op && last.direction === dir) return;
+  const t = tilesFor(b);
+  list.push({ tick, filter, inputPriority: ip, outputPriority: op, direction: dir,
+    tileLeft: t.length >= 2 ? { x: t[0].x, y: t[0].y } : null,
+    tileRight: t.length >= 2 ? { x: t[1].x, y: t[1].y } : null });
+}
+
+// Components of `members` under the same-segment relation (directed flood — same
+// rule as components(), so a segment's partition always agrees with the oracle).
+// Valid because reconcile runs on a settled graph.
+function componentsWithin(belts, members) {
+  const seen = new Set(), comps = [];
+  for (const seed of members) {
+    if (seen.has(seed)) continue;
+    const c = new Set([seed]), st = [seed]; seen.add(seed);
+    while (st.length) for (const n of sameSegmentNeighbours(belts, st.pop())) if (members.has(n) && !seen.has(n)) { seen.add(n); c.add(n); st.push(n); }
+    comps.push(c);
+  }
+  return comps;
+}
+
+function formSeg(state, members, tick) {
+  const id = state.nextSeg++;
+  let splitter = null;
+  for (const u of members) { const b = state.belts.get(u); if (b && isSplitter(b)) { splitter = b; break; } }
+  const seg = { id, tb: tick, members: new Set(), tiles: new Map(), pre: [], suc: [],
+                kind: splitter ? 'splitter' : 'belt' };
+  state.segs.set(id, seg);
+  for (const u of members) join(state, seg, u, tick);
+  if (splitter) appendSplitter(seg, splitter, tick);
+  return seg;
+}
+
+function retireSeg(state, seg, tick) { state.segs.delete(seg.id); seg.tr = tick; state.retired.push(seg); }
+
+// MERGE: belt `u` joins its neighbours' segment; bridged segments unify.
+function merge(state, u, tick) {
+  const ids = new Set();
+  for (const n of sameSegmentNeighbours(state.belts, u)) { const s = state.segOf.get(n); if (s != null) ids.add(s); }
+  let own = state.segOf.get(u);
+  if (own == null) {
+    if (ids.size === 0) { formSeg(state, [u], tick).pre.push({ id: null, units: 0, tick, outcome: 'birth' }); return; }
+    own = [...ids][0]; join(state, state.segs.get(own), u, tick);     // join in place
+  }
+  ids.add(own);
+  if (ids.size === 1) return;
+  const win = [...ids].map(id => state.segs.get(id)).sort((a, b) => (a.tb - b.tb) || (a.id - b.id))[0];
+  for (const id of ids) {
+    if (id === win.id) continue;
+    const lose = state.segs.get(id), n = lose.members.size;
+    for (const m of [...lose.members]) { leave(state, lose, m, tick); join(state, win, m, tick); }
+    retireSeg(state, lose, tick);
+    lose.suc.push({ id: `S-${win.id}`,  units: n, tick, outcome: 'merge' });
+    win.pre.push({  id: `S-${lose.id}`, units: n, tick, outcome: 'merge' });
+  }
+}
+
+// SPLIT: segment may have been cut. Recompute its components; the largest keeps
+// the id, the rest peel off as fresh segments.
+function recut(state, segId, tick) {
+  const seg = segId != null ? state.segs.get(segId) : null;
+  if (!seg) return;
+  const comps = componentsWithin(state.belts, seg.members);
+  if (comps.length <= 1) return;
+  comps.sort((a, b) => b.size - a.size);
+  for (let i = 1; i < comps.length; i++) {
+    for (const u of comps[i]) leave(state, seg, u, tick);
+    const ns = formSeg(state, comps[i], tick);
+    seg.suc.push({ id: `S-${ns.id}`,  units: comps[i].size, tick, outcome: 'split' });
+    ns.pre.push({  id: `S-${seg.id}`, units: comps[i].size, tick, outcome: 'split' });
+  }
+}
+
+// RECONCILE one tick's accumulated dirty set over the settled belt graph.
+export function reconcile(state, dirty, tick) {
+  const { belts, segs, segOf } = state;
+  const touched = new Set();
+  for (const u of dirty) {
+    const sid = segOf.get(u);
+    if (belts.has(u)) { if (sid != null) touched.add(sid); }   // present → its seg may have been cut
+    else if (sid != null) {                                     // departed (removed / replaced-away)
+      const seg = segs.get(sid);
+      leave(state, seg, u, tick);
+      if (seg.members.size === 0) { retireSeg(state, seg, tick); seg.suc.push({ id: null, units: 1, tick, outcome: 'death' }); }
+      else touched.add(sid);
+    }
+  }
+  for (const sid of touched) recut(state, sid, tick);
+  for (const u of dirty) if (belts.has(u)) merge(state, u, tick);
+  for (const u of dirty) { const b = belts.get(u); if (b && isSplitter(b)) appendSplitter(segs.get(segOf.get(u)), b, tick); }
+}
+
+// ── finalize ─────────────────────────────────────────────────
+export function finalize(state, _durationTick) {
+  const all = [...state.segs.values(), ...state.retired].sort((a, b) => (a.tb - b.tb) || (a.id - b.id));
+  return { beltSegments: all.map(toRecord) };
+}
+
+function toRecord(s) {
+  const tileLocations = [];
+  let open = 0;
+  for (const { xy, tb, tr } of s.tiles.values()) for (const t of xy) {
+    const e = { x: t.x, y: t.y, direction: t.direction, tb };
+    if (tr != null) e.tr = tr; else open++;
+    tileLocations.push(e);
+  }
+  const o = { id: `S-${s.id}`, kind: s.kind, tb: s.tb, tiles: open };
+  if (s.tr != null) o.tr = s.tr;
+  if (s.kind === 'splitter' && s.splitterStates) o.splitterStates = s.splitterStates;
+  if (s.pre.length) o.predecessors = s.pre;
+  if (s.suc.length) o.successors = s.suc;
+  if (tileLocations.length) o.tileLocations = tileLocations;
+  return o;
+}

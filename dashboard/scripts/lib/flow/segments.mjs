@@ -255,12 +255,17 @@ function formSeg(state, members, tick) {
 function retireSeg(state, seg, tick) { state.segs.delete(seg.id); seg.tr = tick; state.retired.push(seg); }
 
 // MERGE: belt `u` joins its neighbours' segment; bridged segments unify.
-function merge(state, u, tick) {
+function merge(state, u, tick, events) {
   const ids = new Set();
   for (const n of sameSegmentNeighbours(state.belts, u)) { const s = state.segOf.get(n); if (s != null) ids.add(s); }
   let own = state.segOf.get(u);
   if (own == null) {
-    if (ids.size === 0) { formSeg(state, [u], tick).pre.push({ id: null, units: 0, tick, outcome: 'birth' }); return; }
+    if (ids.size === 0) {
+      const seg = formSeg(state, [u], tick);
+      seg.pre.push({ id: null, units: 0, tick, outcome: 'birth' });
+      events.push({ type: 'segment-created', tick, segId: `S-${seg.id}`, units: [...seg.members] });
+      return;
+    }
     own = [...ids][0]; join(state, state.segs.get(own), u, tick);     // join in place
   }
   ids.add(own);
@@ -273,12 +278,13 @@ function merge(state, u, tick) {
     retireSeg(state, lose, tick);
     lose.suc.push({ id: `S-${win.id}`,  units: n, tick, outcome: 'merge' });
     win.pre.push({  id: `S-${lose.id}`, units: n, tick, outcome: 'merge' });
+    events.push({ type: 'segment-merged', tick, from: `S-${lose.id}`, into: `S-${win.id}`, units: n });
   }
 }
 
 // SPLIT: segment may have been cut. Recompute its components; the largest keeps
 // the id, the rest peel off as fresh segments.
-function recut(state, segId, tick) {
+function recut(state, segId, tick, events) {
   const seg = segId != null ? state.segs.get(segId) : null;
   if (!seg) return;
   const comps = componentsWithin(state.belts, seg.members);
@@ -289,12 +295,22 @@ function recut(state, segId, tick) {
     const ns = formSeg(state, comps[i], tick);
     seg.suc.push({ id: `S-${ns.id}`,  units: comps[i].size, tick, outcome: 'split' });
     ns.pre.push({  id: `S-${seg.id}`, units: comps[i].size, tick, outcome: 'split' });
+    events.push({ type: 'segment-split', tick, from: `S-${seg.id}`, to: `S-${ns.id}`, units: [...comps[i]] });
   }
 }
 
 // RECONCILE one tick's accumulated dirty set over the settled belt graph.
+// Returns the tick's SegmentEvent[] — the topology deltas the edge layer
+// consumes to keep its ledger in step without re-scanning every edge:
+//   { type: 'segment-created', segId, units[] }   new segment (belt birth)
+//   { type: 'segment-merged',  from, into, units } `from` folded into `into`
+//   { type: 'segment-split',   from, to, units[] } `units` peeled off `from` into `to`
+//   { type: 'segment-retired', segId }             segment emptied (death)
+// All segId/from/into/to are the public `S-N` form. Mirrors the per-segment
+// pre/suc lineage exactly — same emit points, surfaced as a stream.
 export function reconcile(state, dirty, tick) {
   const { belts, segs, segOf } = state;
+  const events = [];
   const touched = new Set();
   for (const u of dirty) {
     const sid = segOf.get(u);
@@ -302,13 +318,17 @@ export function reconcile(state, dirty, tick) {
     else if (sid != null) {                                     // departed (removed / replaced-away)
       const seg = segs.get(sid);
       leave(state, seg, u, tick);
-      if (seg.members.size === 0) { retireSeg(state, seg, tick); seg.suc.push({ id: null, units: 1, tick, outcome: 'death' }); }
-      else touched.add(sid);
+      if (seg.members.size === 0) {
+        retireSeg(state, seg, tick);
+        seg.suc.push({ id: null, units: 1, tick, outcome: 'death' });
+        events.push({ type: 'segment-retired', tick, segId: `S-${seg.id}` });
+      } else touched.add(sid);
     }
   }
-  for (const sid of touched) recut(state, sid, tick);
-  for (const u of dirty) if (belts.has(u)) merge(state, u, tick);
+  for (const sid of touched) recut(state, sid, tick, events);
+  for (const u of dirty) if (belts.has(u)) merge(state, u, tick, events);
   for (const u of dirty) { const b = belts.get(u); if (b && isSplitter(b)) appendSplitter(segs.get(segOf.get(u)), b, tick); }
+  return events;
 }
 
 // ── finalize ─────────────────────────────────────────────────

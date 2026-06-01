@@ -25,7 +25,6 @@ import { buildMiners } from './miners-prep.mjs';
 import { buildMapData } from './map-prep.mjs';
 import { buildMergedEntities } from './lib/layout/merge-entities.mjs';
 import { buildFlow } from './flow-prep.mjs';
-import { buildSmelting } from './smelting-prep.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_ROOT = path.resolve(__dirname, '..');
@@ -122,13 +121,6 @@ try {
   console.warn(`  flow-prep: failed (${err?.message ?? err}) — flow=null`);
 }
 
-let smelting = null;
-try {
-  smelting = buildSmelting(runDir, rocketLaunchTick, phases, flow);
-} catch (err) {
-  console.warn(`  smelting-prep: failed (${err?.message ?? err}) — smelting=null`);
-}
-
 const output = {
   runName,
   durationTicks: rocketLaunchTick,
@@ -146,7 +138,6 @@ const output = {
   production,
   stocks,
   flow,
-  smelting,
 };
 
 const outDir = path.join(REPO_ROOT, 'built-data');
@@ -183,14 +174,9 @@ if (manualGathering) {
   console.log(`  stocks: ${stocks.groups.length} groups (${bufN} buffer + ${stocks.groups.length - bufN} inventory, ~${totalEvents} change events) across ${items.size} item(s) (period=${stocks.period})`);
 }
 if (flow) {
-  console.log(`  flow: ${flow.summary.clusterCount} clusters (${JSON.stringify(flow.summary.clustersByKind)}), ${flow.summary.beltSegmentCount} belt segments`);
+  console.log(`  flow: ${flow.summary.beltSegmentCount} belt segments (${JSON.stringify(flow.summary.segmentsByKind)})`);
 } else {
   console.log('  flow: null (required inputs missing)');
-}
-if (smelting) {
-  console.log(`  smelting: ${smelting.lanes?.length ?? 0} lanes`);
-} else {
-  console.log('  smelting: null');
 }
 // Map data is built event-driven via the Java ReplaySidecar inside
 // map-prep — see docs/specs/fbsr_event_driven_pipeline.md. The sidecar

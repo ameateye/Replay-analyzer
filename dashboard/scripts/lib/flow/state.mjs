@@ -7,9 +7,10 @@
 // object, and so cross-tier lookups (edges reading the belt graph, or resolving
 // a belt unit's segment) need no ctx indirection. See docs/specs/flow_edges_core.md.
 //
-// Kept self-contained (no lib/flow imports). `tk` matches geometry.mjs's tileKey
-// format (`${x},${y}`) so the shared tile index keys identically to the logger.
-const tk = (x, y) => `${x},${y}`;
+// Kept self-contained (no lib/flow imports). `tileKey` is the one tile-key format
+// (`${x},${y}`); it's exported so the edge logger keys edgesByTile identically
+// instead of re-deriving its own.
+export const tileKey = (x, y) => `${x},${y}`;
 
 export function createFlowState() {
   return {
@@ -33,10 +34,10 @@ export function createFlowState() {
     // ── edge slice (edges.mjs) ──
     // Entity registries, keyed by unit. Belts live in `belts` above (segments
     // owns them); machines/miners/buffers/inserters are the edge layer's.
-    machines:  new Map(),  // unit → { unit, name, location, footprint, tiles, bbox, currentRecipe, tb, tr? }
-    miners:    new Map(),  // unit → { unit, name, location, direction, footprint, tiles, bbox, resource, dropTile, tb, tr? }
-    buffers:   new Map(),  // unit → { unit, name, location, footprint, tiles, bbox, currentStoredItem, tb, tr? }
-    inserters: new Map(),  // unit → { unit, name, location, tile, direction, reach, useFilters, filterMode, filters, tb, tr? }
+    machines:  new Map(),  // unit → { unit, name, location, footprint, tiles, tb }
+    miners:    new Map(),  // unit → { unit, name, location, direction, footprint, tiles, dropTile, edgeId, tb }
+    buffers:   new Map(),  // unit → { unit, name, location, footprint, tiles, tb }  (reserved; not logged yet)
+    inserters: new Map(),  // unit → { unit, name, location, tile, direction, reach, edgeId, tb }
     // Unified tile → entity index over ALL physical categories (belts, machines,
     // miners, buffers). The edges logger writes every category here so a single
     // findEntityInTile resolves an inserter's pickup/drop without a per-category
@@ -44,12 +45,16 @@ export function createFlowState() {
     tileEntities: new Map(),  // tileKey → { unit, category, name }
     // Edge store + reverse indices. edgesBySegment drives the affected-only
     // segment-event update (never scan every segment).
-    edges:           new Map(),  // edgeId → edge (live; tr set when retired)
-    nextEdgeId:      0,
-    edgesByInserter: new Map(),  // unit  → Set<edgeId>
-    edgesByMiner:    new Map(),  // unit  → Set<edgeId>
-    edgesByMachine:  new Map(),  // unit  → Set<edgeId>
-    edgesBySegment:  new Map(),  // segId → Set<edgeId>
+    edges:      new Map(),  // edgeId → edge (live; tr set when retired)
+    nextEdgeId: 0,
+    // The ONLY edge index. An edge is identified by its (fromTile → toTile); a
+    // machine/belt appearing or leaving a tile looks up the OWNED edges anchored
+    // there and opens/closes the endpoint's unit interval in place (a quick-replace
+    // gives a new unit but the same edge). Owner→edge is 1:1, so the inserter/miner
+    // rec carries its own edgeId — no owner index. Belt-belt edges are stream-managed
+    // and not tile-indexed. Segment is resolved on demand (getSegmentFromUnit), not
+    // stored, so there's no segment index either.
+    edgesByTile: new Map(),  // tileKey → Set<edgeId>  (owned edges' endpoint tiles)
   };
 }
 
@@ -57,19 +62,19 @@ export function createFlowState() {
 
 // Entity occupying a tile (belt / machine / miner / buffer), or null.
 export function findEntityInTile(state, x, y) {
-  return state.tileEntities.get(tk(x, y)) ?? null;
+  return state.tileEntities.get(tileKey(x, y)) ?? null;
 }
 
 // Index `rec = { unit, category, name }` at tile (x, y). Last writer wins —
 // callers clear a unit's tiles on removal before a new entity reuses them.
 export function setEntityTile(state, x, y, rec) {
-  state.tileEntities.set(tk(x, y), rec);
+  state.tileEntities.set(tileKey(x, y), rec);
 }
 
 // Clear tile (x, y) iff it is still held by `unit` (guards against clobbering a
 // tile a newer entity already took over).
 export function clearEntityTile(state, x, y, unit) {
-  const k = tk(x, y);
+  const k = tileKey(x, y);
   const cur = state.tileEntities.get(k);
   if (cur && cur.unit === unit) state.tileEntities.delete(k);
 }

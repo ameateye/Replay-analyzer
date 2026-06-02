@@ -42,7 +42,10 @@ function toSet(v) {
   return new Set();
 }
 
-// The folded rec, field-for-field identical to the frozen _addBelt.
+// The folded rec, field-for-field identical to the frozen _addBelt, plus `tb`
+// (the belt's build tick) so the edge layer can denormalise each belt
+// endpoint's own lifetime onto its edges. tb lives here, not on the segment
+// tile entry, because it's the entity's identity — it survives segment churn.
 function addBelt(belts, e) {
   belts.set(e.unit, {
     unit: e.unit,
@@ -50,6 +53,7 @@ function addBelt(belts, e) {
     beltType: e.beltType,
     direction: e.direction ?? 0,
     location: e.location,
+    tb: e.tick ?? null,
     beltToGroundType: e.beltToGroundType ?? null,
     undergroundPair: e.undergroundPair ?? null,
     beltInputs: toSet(e.beltInputs),

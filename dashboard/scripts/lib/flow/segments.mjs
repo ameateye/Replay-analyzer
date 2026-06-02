@@ -299,6 +299,48 @@ function recut(state, segId, tick, events) {
   }
 }
 
+// ── belt edges (cross-segment connections) ───────────────────
+// A belt edge is a belt output feeder→consumer NOT classed same-segment — a
+// sideload, splitter boundary, or 2-input corner. On the SETTLED graph that's
+// `beltOutputs \ sameSegmentNeighbours`, read straight off the captured edges —
+// no geometry, no segOf bookkeeping. The feeder owns the edge; dirtyMark marks a
+// feeder dirty whenever a consumer it feeds changes, so every affected edge is
+// re-derived from its feeder side and the diff stays local. Because the test is
+// purely local (never reads segOf), the diff is correct at any point the unit is
+// visited — so it runs inline in reconcile's merge/departure passes (which
+// already visit every dirty unit), not as a separate trailing scan.
+// Per-feeder edge diff: re-derive u's cross-segment outputs (beltOutputs \
+// sameSegmentNeighbours) and diff against the set stored last tick, emitting
+// UNIT→UNIT belt-edge deltas. The test is pure-local (sameSegmentNeighbours
+// reads only u's + its neighbours' own attributes, never segOf), so the edge
+// SET is independent of merge/split ordering — which is why this can run inline
+// at each unit's merge/departure visit (below) with no separate trailing scan,
+// and why no segment id is attached: the edge is a unit pair, and segment
+// membership is resolved by whoever consumes the stream.
+function edgeDiffFeeder(state, u, tick, events) {
+  const { belts, beltEdges } = state;
+  const prev = beltEdges.get(u);                 // u's cross-segment outputs last tick
+  const b = belts.get(u);
+  if (!b) {                                       // feeder gone → retire all it fed
+    if (prev) {
+      for (const v of prev) events.push({ type: 'belt-edge-removed', tick, feeder: u, consumer: v });
+      beltEdges.delete(u);
+    }
+    return;
+  }
+  const same = sameSegmentNeighbours(belts, u);
+  let wanted = null;
+  for (const v of b.beltOutputs) {
+    if (!belts.has(v) || same.has(v)) continue;   // missing or same-segment → not an edge
+    (wanted ??= new Set()).add(v);
+    if (!prev || !prev.has(v)) events.push({ type: 'belt-edge-added', tick, feeder: u, consumer: v });
+  }
+  if (prev) for (const v of prev) if (!wanted || !wanted.has(v)) {
+    events.push({ type: 'belt-edge-removed', tick, feeder: u, consumer: v });
+  }
+  if (wanted) beltEdges.set(u, wanted); else beltEdges.delete(u);
+}
+
 // RECONCILE one tick's accumulated dirty set over the settled belt graph.
 // Returns the tick's SegmentEvent[] — the topology deltas the edge layer
 // consumes to keep its ledger in step without re-scanning every edge:
@@ -306,8 +348,19 @@ function recut(state, segId, tick, events) {
 //   { type: 'segment-merged',  from, into, units } `from` folded into `into`
 //   { type: 'segment-split',   from, to, units[] } `units` peeled off `from` into `to`
 //   { type: 'segment-retired', segId }             segment emptied (death)
-// All segId/from/into/to are the public `S-N` form. Mirrors the per-segment
-// pre/suc lineage exactly — same emit points, surfaced as a stream.
+// plus the UNIT→UNIT belt-connection deltas (edgeDiffFeeder, folded inline):
+//   { type: 'belt-edge-added',   feeder, consumer }
+//   { type: 'belt-edge-removed', feeder, consumer }
+// segId/from/into/to are the public `S-N` form; belt edges carry no segId — they
+// are a unit pair, and the consumer resolves segment membership itself.
+//
+// The belt-edge diff is folded into the two passes that already visit every
+// dirty unit — departed units in the departure pass, present units in the merge
+// pass — so there is NO separate trailing scan. This is sound because the edge
+// test is purely local (sameSegmentNeighbours never reads segOf): every edge
+// change is owned by a feeder whose attributes (or whose consumer's attributes)
+// changed, and dirtyMark marks both endpoints, so the merge/departure visits
+// cover every affected feeder. See edgeDiffFeeder.
 export function reconcile(state, dirty, tick) {
   const { belts, segs, segOf } = state;
   const events = [];
@@ -315,18 +368,24 @@ export function reconcile(state, dirty, tick) {
   for (const u of dirty) {
     const sid = segOf.get(u);
     if (belts.has(u)) { if (sid != null) touched.add(sid); }   // present → its seg may have been cut
-    else if (sid != null) {                                     // departed (removed / replaced-away)
-      const seg = segs.get(sid);
-      leave(state, seg, u, tick);
-      if (seg.members.size === 0) {
-        retireSeg(state, seg, tick);
-        seg.suc.push({ id: null, units: 1, tick, outcome: 'death' });
-        events.push({ type: 'segment-retired', tick, segId: `S-${seg.id}` });
-      } else touched.add(sid);
+    else {                                                      // departed (removed / replaced-away)
+      edgeDiffFeeder(state, u, tick, events);                  // retire the edges it owned
+      if (sid != null) {
+        const seg = segs.get(sid);
+        leave(state, seg, u, tick);
+        if (seg.members.size === 0) {
+          retireSeg(state, seg, tick);
+          seg.suc.push({ id: null, units: 1, tick, outcome: 'death' });
+          events.push({ type: 'segment-retired', tick, segId: `S-${seg.id}` });
+        } else touched.add(sid);
+      }
     }
   }
   for (const sid of touched) recut(state, sid, tick, events);
-  for (const u of dirty) if (belts.has(u)) merge(state, u, tick, events);
+  for (const u of dirty) if (belts.has(u)) {
+    merge(state, u, tick, events);
+    edgeDiffFeeder(state, u, tick, events);                    // derive its cross-segment outputs
+  }
   for (const u of dirty) { const b = belts.get(u); if (b && isSplitter(b)) appendSplitter(segs.get(segOf.get(u)), b, tick); }
   return events;
 }

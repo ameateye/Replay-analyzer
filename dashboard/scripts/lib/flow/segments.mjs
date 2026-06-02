@@ -25,7 +25,7 @@
 // nothing from lib/flow/ (only the shared state container, see state.mjs). The
 // old geometric model is kept as segments-old.mjs.
 
-import { createFlowState } from './state.mjs';
+import { createFlowState, setEntityTile, clearEntityTile } from './state.mjs';
 
 // 'belt' category tag. TODO(refactor): source entity-name constants from the
 // game-data payload rather than hardcoding — see docs/refactors/segments-edge-rewrite.md.
@@ -206,14 +206,23 @@ function join(state, seg, u, tick) {        // u enters seg → open its tile oc
   seg.members.add(u);
   state.segOf.set(u, seg.id);
   const b = state.belts.get(u);
-  if (b) seg.tiles.set(u, { xy: tilesFor(b), tb: tick });
+  if (b) {
+    const xy = tilesFor(b);
+    seg.tiles.set(u, { xy, tb: tick });
+    // Belt tiles join the shared tile index here so edges' findEntityInTile
+    // resolves belts (segments owns belt tiles; edges only queries them).
+    for (const t of xy) setEntityTile(state, t.x, t.y, { unit: u, category: 'belt', name: b.name });
+  }
 }
 
 function leave(state, seg, u, tick) {       // u exits seg → close occupancy (entry kept for geometry)
   seg.members.delete(u);
   if (state.segOf.get(u) === seg.id) state.segOf.delete(u);
   const t = seg.tiles.get(u);
-  if (t && t.tr == null) t.tr = tick;
+  if (t) {
+    if (t.tr == null) t.tr = tick;
+    for (const xy of t.xy) clearEntityTile(state, xy.x, xy.y, u);   // drop belt tiles from the shared index
+  }
 }
 
 // Append a splitter state, skipping a no-op repeat of the last logged one.

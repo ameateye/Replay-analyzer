@@ -286,12 +286,12 @@ function merge(state, u, tick, events) {
   const win = [...ids].map(id => state.segs.get(id)).sort((a, b) => (a.tb - b.tb) || (a.id - b.id))[0];
   for (const id of ids) {
     if (id === win.id) continue;
-    const lose = state.segs.get(id), n = lose.members.size;
-    for (const m of [...lose.members]) { leave(state, lose, m, tick); join(state, win, m, tick); }
+    const lose = state.segs.get(id), moved = [...lose.members], n = moved.length;
+    for (const m of moved) { leave(state, lose, m, tick); join(state, win, m, tick); }
     retireSeg(state, lose, tick);
     lose.suc.push({ id: `S-${win.id}`,  units: n, tick, outcome: 'merge' });
     win.pre.push({  id: `S-${lose.id}`, units: n, tick, outcome: 'merge' });
-    events.push({ type: 'segment-merged', tick, from: `S-${lose.id}`, into: `S-${win.id}`, units: n });
+    events.push({ type: 'segment-merged', tick, from: `S-${lose.id}`, into: `S-${win.id}`, units: moved });
   }
 }
 
@@ -357,9 +357,9 @@ function edgeDiffFeeder(state, u, tick, events) {
 // RECONCILE one tick's accumulated dirty set over the settled belt graph.
 // Returns the tick's SegmentEvent[] — the topology deltas the edge layer
 // consumes to keep its ledger in step without re-scanning every edge:
-//   { type: 'segment-created', segId, units[] }   new segment (belt birth)
-//   { type: 'segment-merged',  from, into, units } `from` folded into `into`
-//   { type: 'segment-split',   from, to, units[] } `units` peeled off `from` into `to`
+//   { type: 'segment-created', segId, units[] }    new segment (belt birth)
+//   { type: 'segment-merged',  from, into, units[] } `units` (all of `from`) folded into `into`
+//   { type: 'segment-split',   from, to, units[] }  `units` peeled off `from` into `to`
 //   { type: 'segment-retired', segId }             segment emptied (death)
 // plus the UNIT→UNIT belt-connection deltas (edgeDiffFeeder, folded inline):
 //   { type: 'belt-edge-added',   feeder, consumer }

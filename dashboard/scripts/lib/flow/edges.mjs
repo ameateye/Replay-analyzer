@@ -454,7 +454,10 @@ export function rebuildLiveEdgeKeys(state) {
   return out;
 }
 
-// Provisional — the process commit owns the real finalize + serialisation.
+// The shipped edge ledger: every edge ever minted, build-ordered. Each record
+// is already plain JSON — { id, tb, tr?, from, to, inserterUnit?|minerUnit? },
+// each endpoint a { tile?, units[], segs?, side? }. Owner-less records are
+// belt↔belt edges. Consumers slice the unit + segment timelines by tick.
 export function finalize(state) {
   return { edges: [...state.edges.values()].sort((a, b) => (a.tb - b.tb) || a.id.localeCompare(b.id)) };
 }

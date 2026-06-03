@@ -1,28 +1,31 @@
-// Flow prep — event-driven lifetime cluster + belt-segment graph.
+// Flow prep — event-driven belt-segment graph + tile-anchored edge ledger.
 //
 // Reads the lossless merged-entity stream (lib/layout/merge-entities.mjs),
 // synthesises a sorted event stream (entity-built / entity-mutated /
 // entity-removed / entity-replaced / recipe-changed / buffer-content-changed),
-// and folds it through the belt-segment pipeline module:
+// and folds it through two pipeline modules sharing one state container:
 //
-//   segments.mjs  — connected belt-tile components (lifetime topology). New
-//                   contract: applyEvent returns a dirty set; the caller
-//                   accumulates a tick's dirty belt units then calls
-//                   reconcile() ONCE per tick on the settled graph.
+//   segments.mjs  — connected belt-tile components (lifetime topology).
+//                   applyEvent returns a dirty set; the caller accumulates a
+//                   tick's dirty belt units then calls reconcile() ONCE per
+//                   tick on the settled graph, which returns the tick's
+//                   segment events (created / merged / split + belt-edge-*).
+//   edges.mjs     — durable, tile-anchored edges (inserter / miner / belt↔belt),
+//                   each endpoint a tile with unit + segment occupancy
+//                   timelines. applyEvent mints/retires/morphs edges; after
+//                   reconcile, mintBeltEdge / retireBeltEdge consume the
+//                   belt-edge-* stream and updateSegments advances the segment
+//                   timeline on every belt that moved between segments this tick.
 //
-// Output shape: { durationTick, summary, beltSegments } as the `flow`
+// Output shape: { durationTick, summary, beltSegments, edges } as the `flow`
 // top-level field on the per-run JSON. `null` when inputs are missing.
-//
-// The sideload/edge layer (edges.mjs) and the per-segment belt-flow `contents`
-// were removed in the edge-based segments rewrite — see
-// docs/refactors/segments-edge-rewrite.md. `flow.edges` and
-// `beltSegments[*].contents` no longer exist.
 
 import { existsSync } from 'node:fs';
 
 import { buildMergedEntities } from './lib/layout/merge-entities.mjs';
 import { createFlowState } from './lib/flow/state.mjs';
 import * as segments from './lib/flow/segments.mjs';
+import * as edges from './lib/flow/edges.mjs';
 
 // Floor a captured entity location to its tile origin. Inlined — the flow
 // pipeline doesn't otherwise depend on the geometry helpers.
@@ -35,35 +38,50 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
   const mergedStream = merged ?? buildMergedEntities(runDir, durationTick);
   if (!mergedStream || mergedStream.length === 0) return null;
 
-  const segState = createFlowState();
+  const state = createFlowState();
 
   const events = _synthesiseEvents(mergedStream, durationTick);
 
-  // Drive the fold. segments uses the per-tick reconcile contract: apply
-  // every event of a tick (accumulating dirty belt units), then reconcile the
-  // settled graph ONCE for that tick. Events are tick-sorted, so a tick's
-  // events are contiguous.
+  // Drive the fold. Per tick: apply every event (accumulating dirty belt units
+  // for segments, mutating edges in place), then settle the tick ONCE — segments
+  // reconcile, then the edge layer consumes the resulting events. Events are
+  // tick-sorted, so a tick's events are contiguous.
   let curTick = null;
   let dirty = new Set();
-  for (const ev of events) {
-    if (curTick !== null && ev.tick !== curTick) {
-      segments.reconcile(segState, dirty, curTick);
-      dirty = new Set();
+  const settle = (tick) => {
+    // Belts that may have changed segment this tick: the directly-dirty belts
+    // (covers join-in-place, which emits no event) plus the units carried by
+    // segment-created / -merged / -split (merge-losers and split-peeled belts
+    // that aren't individually dirty). updateSegments walks these to their
+    // tiles and advances each anchored endpoint's segment timeline.
+    const moved = new Set(dirty);
+    for (const se of segments.reconcile(state, dirty, tick)) {
+      if (se.type === 'belt-edge-added')        edges.mintBeltEdge(state, se.feeder, se.consumer, tick);
+      else if (se.type === 'belt-edge-removed') edges.retireBeltEdge(state, se.feeder, se.consumer, tick);
+      else if (se.units) for (const u of se.units) moved.add(u);
     }
+    edges.updateSegments(state, moved, tick);
+    dirty = new Set();
+  };
+  for (const ev of events) {
+    if (curTick !== null && ev.tick !== curTick) settle(curTick);
     curTick = ev.tick;
-    const d = segments.applyEvent(segState, ev);
+    const d = segments.applyEvent(state, ev);
     if (d) for (const u of d) dirty.add(u);
+    edges.applyEvent(state, ev);
   }
-  if (curTick !== null) segments.reconcile(segState, dirty, curTick);
+  if (curTick !== null) settle(curTick);
 
-  const { beltSegments } = segments.finalize(segState, durationTick);
+  const { beltSegments } = segments.finalize(state, durationTick);
+  const { edges: edgeList } = edges.finalize(state);
 
-  const summary = _buildSummary(beltSegments);
+  const summary = _buildSummary(beltSegments, edgeList);
 
   return {
     durationTick,
     summary,
     beltSegments,
+    edges: edgeList,
   };
 }
 
@@ -78,15 +96,26 @@ export function synthesiseEventsForRun(runDir, durationTick = Number.MAX_SAFE_IN
   return _synthesiseEvents(merged, durationTick);
 }
 
-function _buildSummary(beltSegments) {
+function _buildSummary(beltSegments, edges) {
   const segmentsByKind = { belt: 0, splitter: 0 };
   for (const s of beltSegments) {
     const k = s.kind ?? 'belt';
     if (segmentsByKind[k] !== undefined) segmentsByKind[k] += 1;
   }
+  // Edges by owner: inserter / miner / belt (belt↔belt cross-segment).
+  const edgesByKind = { inserter: 0, miner: 0, belt: 0 };
+  let liveEdges = 0;
+  for (const e of edges) {
+    const k = e.inserterUnit != null ? 'inserter' : e.minerUnit != null ? 'miner' : 'belt';
+    edgesByKind[k] += 1;
+    if (e.tr == null) liveEdges += 1;
+  }
   return {
     beltSegmentCount: beltSegments.length,
     segmentsByKind,
+    edgeCount: edges.length,
+    liveEdgeCount: liveEdges,
+    edgesByKind,
   };
 }
 

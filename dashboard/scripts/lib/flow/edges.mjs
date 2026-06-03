@@ -203,10 +203,12 @@ function unregisterMachine(state, unit, tick) {
 // category, so an endpoint follows a tile that changes type.
 function openEndpointAt(state, tile, unit, category, tick) {
   forEdgesAt(state, tile, (e) => {
+    if (!isOwned(e)) return;                        // belt↔belt edges are stream-managed, not tile-morphed
     for (const ep of [e.from, e.to]) {
       if (!ep.tile || !sameTile(ep.tile, tile)) continue;
       openUnit(ep, unit, category, tick);
-      ep.side = category === 'belt' ? sideForEndpoint(state, e, ep) : null;
+      if (category === 'belt') { ep.side = sideForEndpoint(state, e, ep); openSeg(ep, state.segOf.get(unit), tick); }
+      else ep.side = null;
     }
   });
 }
@@ -216,7 +218,8 @@ function openEndpointAt(state, tile, unit, category, tick) {
 // clobber the freshly-opened interval.)
 function closeEndpointAt(state, tile, unit, tick) {
   forEdgesAt(state, tile, (e) => {
-    for (const ep of [e.from, e.to]) if (sameTile(ep.tile, tile) && curUnit(ep) === unit) closeUnit(ep, tick);
+    if (!isOwned(e)) return;                        // belt↔belt edges retire via the stream, not on belt-leave
+    for (const ep of [e.from, e.to]) if (sameTile(ep.tile, tile) && curUnit(ep) === unit) { closeUnit(ep, tick); closeSeg(ep, tick); }
   });
 }
 
@@ -225,6 +228,21 @@ function refreshSidesAt(state, tile) {
   forEdgesAt(state, tile, (e) => {
     for (const ep of [e.from, e.to]) if (ep.tile && sameTile(ep.tile, tile) && curCat(ep) === 'belt') ep.side = sideForEndpoint(state, e, ep);
   });
+}
+
+// Segment topology changed this tick → for each belt that moved between segments
+// (the units carried by segment-created / -merged / -split), walk its tile to the
+// edges anchored there and advance every endpoint holding that belt to its now-current
+// segment. The one index this rides is edgesByTile; segments hands us the moved units.
+export function updateSegments(state, movedUnits, tick) {
+  for (const unit of movedUnits) {
+    const b = state.belts.get(unit);
+    if (!b) continue;
+    const seg = state.segOf.get(unit);
+    forEdgesAt(state, floorTile(b.location), (e) => {
+      for (const ep of [e.from, e.to]) if (curUnit(ep) === unit) openSeg(ep, seg, tick);
+    });
+  }
 }
 
 function forEdgesAt(state, tile, fn) {
@@ -282,6 +300,29 @@ function closeUnit(ep, tick) {
   if (last && last.tr == null) last.tr = tick;
 }
 
+const isOwned = (e) => e.inserterUnit != null || e.minerUnit != null;
+
+// Segment occupancy timeline on a belt endpoint, parallel to its unit timeline:
+// which live segment the endpoint's current belt sits in. Opened when a belt lands
+// or an edge mints onto a belt, advanced by updateSegments when a merge/split
+// renumbers that belt, closed when the belt leaves. A null seg (a belt not yet
+// assigned a segment, pre-reconcile) is skipped — updateSegments opens the interval
+// once segment-created assigns one.
+function openSeg(ep, seg, tick) {
+  if (seg == null) return;
+  const last = ep.segs?.[ep.segs.length - 1];
+  if (last && last.tr == null) {
+    if (last.seg === seg) return;
+    last.tr = tick;
+  }
+  (ep.segs ??= []).push({ seg, tb: tick, tr: null });
+}
+
+function closeSeg(ep, tick) {
+  const last = ep.segs?.[ep.segs.length - 1];
+  if (last && last.tr == null) last.tr = tick;
+}
+
 // Belt endpoint's live segment id, resolved on demand.
 export function endpointSegment(state, ep) {
   const u = curUnit(ep);
@@ -293,7 +334,7 @@ export function mintBeltEdge(state, feeder, consumer, tick) {
   const from = beltEndpoint(state, feeder, tick), to = beltEndpoint(state, consumer, tick);
   if (!from || !to) return;
   to.side = beltToBeltSide(state, feeder, consumer);
-  mintEdge(state, { from, to }, tick);                  // no owner → not tile-indexed
+  mintEdge(state, { from, to }, tick);                  // no owner; tile-indexed for the segment walk only
 }
 
 export function retireBeltEdge(state, feeder, consumer, tick) {
@@ -314,10 +355,12 @@ function beltEndpoint(state, unit, tick) {
 function mintEdge(state, fields, tick) {
   const edge = { id: `E-${state.nextEdgeId++}`, tb: tick, ...fields };
   state.edges.set(edge.id, edge);
-  if (edge.inserterUnit != null || edge.minerUnit != null) {       // owned edges are tile-indexed for replace updates
-    for (const ep of [edge.from, edge.to]) {
-      if (ep.tile) addTile(state, ep.tile, edge.id);
-      if (curCat(ep) === 'belt') ep.side = sideForEndpoint(state, edge, ep);
+  const owned = isOwned(edge);
+  for (const ep of [edge.from, edge.to]) {
+    if (ep.tile) addTile(state, ep.tile, edge.id);                 // every belt endpoint is reachable by the segment walk
+    if (curCat(ep) === 'belt') {
+      if (owned) ep.side = sideForEndpoint(state, edge, ep);       // belt↔belt side is set by mintBeltEdge
+      openSeg(ep, state.segOf.get(curUnit(ep)), tick);
     }
   }
   return edge;
@@ -332,6 +375,7 @@ function retireEdge(state, id, tick) {
   if (owner) owner.edgeId = null;
   for (const ep of [e.from, e.to]) {
     closeUnit(ep, tick);
+    closeSeg(ep, tick);
     if (ep.tile) state.edgesByTile.get(tileKey(ep.tile.x, ep.tile.y))?.delete(id);
   }
 }

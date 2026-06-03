@@ -54,12 +54,21 @@ function resolveSide(state, beltUnit, beltTile, ownerLoc, mode) {
   return mode === 'drop' ? (s === 'left' ? 'right' : 'left') : s;
 }
 
-// Side of the consumer relative to a belt→belt feeder (cross-segment connection).
+// Which CONSUMER lane a belt→belt hand-off feeds (cross-segment connection).
+// Collinear (same-direction inline) merge → 'both' lanes carry through. Otherwise
+// it's a perpendicular sideload. A belt only outputs straight ahead, so the feeder
+// always pushes into the consumer's cell from directly behind it — i.e. the feeder
+// sits on the consumer side OPPOSITE the feeder's travel direction, in the
+// consumer's frame. This depends only on the two directions, not on either centre:
+// using the floored centre broke for 2-tile splitter feeders, whose origin tile is
+// diagonal to the consumer and tie-broke sideAlong to the wrong lane.
 function beltToBeltSide(state, feeder, consumer) {
   const f = state.belts.get(feeder), c = state.belts.get(consumer);
-  if (!f || !c || f.direction === c.direction) return 'right';
-  const fc = tileCenter(floorTile(f.location)), cc = tileCenter(floorTile(c.location));
-  return sideAlong(f.direction, cc.x - fc.x, cc.y - fc.y);
+  if (!f || !c) return 'right';
+  if (f.direction === c.direction) return 'both';
+  const v = DV[f.direction];
+  if (!v) return 'right';
+  return sideAlong(c.direction, -v.x, -v.y);
 }
 
 // ── dispatch ──────────────────────────────────────────────────

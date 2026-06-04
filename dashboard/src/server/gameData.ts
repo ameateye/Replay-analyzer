@@ -121,6 +121,63 @@ export function packShort(gameData: GameData, pack: string): string {
   return gameData.sciencePacks.displayMeta[pack]?.short ?? pack;
 }
 
+// ---------- item-colour palette (used by the flow overlay) ----------
+
+// Hand-picked colours per item — varies across hue + saturation + lightness
+// so the eye can read a base map and identify what's flowing. Items not in
+// the table fall back to a deterministic-hash palette.
+const ITEM_COLORS: Record<string, string> = {
+  'iron-ore':            '#6e7d96',
+  'copper-ore':          '#c47a3a',
+  'stone':               '#a89770',
+  'coal':                '#202024',
+  'uranium-ore':         '#5db04a',
+  'iron-plate':          '#c5cad6',
+  'copper-plate':        '#e08a3e',
+  'steel-plate':         '#8a99b2',
+  'stone-brick':         '#9c8a6a',
+  'iron-gear-wheel':     '#8d96a8',
+  'iron-stick':          '#b0a890',
+  'copper-cable':        '#e6a463',
+  'electronic-circuit':  '#3aa44b',
+  'advanced-circuit':    '#c8403e',
+  'processing-unit':     '#3266c4',
+  'pipe':                '#a3a3a3',
+  'pipe-to-ground':      '#7a7a85',
+  'concrete':            '#6b6b70',
+  'plastic-bar':         '#e0e0e0',
+  'sulfur':              '#f0d435',
+  'battery':             '#2c8a4a',
+  'explosives':          '#d24c2c',
+  'solid-fuel':          '#3a2a1c',
+  'engine-unit':         '#7c6e5c',
+  'electric-engine-unit':'#7e9b87',
+  'flying-robot-frame':  '#b0c4d8',
+  'low-density-structure':'#c7d8e6',
+  'rocket-fuel':         '#a04030',
+  'rocket-part':         '#c84028',
+  'automation-science-pack': '#d24545',
+  'logistic-science-pack':   '#3aa850',
+  'military-science-pack':   '#6f6f6f',
+  'chemical-science-pack':   '#3aa8b8',
+  'production-science-pack': '#a850c8',
+  'utility-science-pack':    '#e0c050',
+};
+
+const ITEM_COLOR_FALLBACKS = [
+  '#7488a8', '#a06870', '#7c9c5e', '#8a78a8', '#a89060', '#5e8c98',
+  '#a85c5c', '#5c98a8', '#a8985c', '#5c5ca8',
+];
+
+export function colorForItem(item: string | null | undefined): string {
+  if (!item) return '#888888';
+  const c = ITEM_COLORS[item];
+  if (c) return c;
+  let h = 0;
+  for (let i = 0; i < item.length; i++) h = ((h * 31) + item.charCodeAt(i)) >>> 0;
+  return ITEM_COLOR_FALLBACKS[h % ITEM_COLOR_FALLBACKS.length];
+}
+
 // ---------- research-interval augmentation ----------
 
 export type ResearchIntervalBase = {

@@ -19,6 +19,320 @@ import {
 } from '../lib/mapModel';
 import './MapView.css';
 
+// Flow segment overlay: a layer that draws each belt segment (from the
+// flow model) as a continuous polyline through tile centers, with
+// directional arrows along the path. When the flow prep emits per-lane
+// `contents` (one entry per left/right belt side) the segment is
+// rendered as TWO parallel lane lines, each coloured by its lane's
+// item; otherwise a single centred line. Toggled via the layers bar.
+// One presence interval for a single item on a single lane. tb/tr are
+// game ticks (60 ticks/sec). tr omitted ↔ still present at run end —
+// aligns with the tb/tr convention used by segments, edges, machines.
+export type FlowLaneInterval = { item: string; tb: number; tr?: number };
+
+// Per-tile occupancy with timing. Same (x,y) may legally appear twice
+// with adjacent [tb, tr) windows when a quick-replace swaps the
+// occupying unit (see per_run_data.md). Half-open intervals: alive at
+// tick T ↔ `tb <= T && (tr === undefined || tr > T)`.
+export type FlowTileLocation = {
+  x: number;
+  y: number;
+  direction?: number;
+  tb: number;
+  tr?: number;
+};
+
+export type FlowSegmentLite = {
+  id: string;
+  tb: number;
+  tr?: number;
+  tileLocations?: FlowTileLocation[];
+  contents?: {
+    left?:  { items?: FlowLaneInterval[] };
+    right?: { items?: FlowLaneInterval[] };
+  };
+};
+
+const FLOW_DIR_VEC: Record<number, [number, number]> = {
+  0:  [0, -1],   // N
+  4:  [1,  0],   // E
+  8:  [0,  1],   // S
+  12: [-1, 0],   // W
+};
+
+// Continuous polyline geometry for one segment. Returns one path per
+// connected directional chain in the segment; UG-pair jumps & splitter
+// twin-tiles naturally fall into separate paths because their tiles are
+// not geometrically adjacent in the flow direction.
+type FlowPath = { pts: { x: number; y: number }[]; dirs: [number, number][] };
+function buildFlowPaths(tiles: { x: number; y: number; direction?: number }[] | undefined): FlowPath[] {
+  if (!tiles || tiles.length === 0) return [];
+  const keyOf = (t: { x: number; y: number }) => `${t.x},${t.y}`;
+  const byKey = new Map<string, { x: number; y: number; direction?: number }>();
+  for (const t of tiles) byKey.set(keyOf(t), t);
+  const forward = new Map<string, string>();
+  const hasIncoming = new Set<string>();
+  for (const t of tiles) {
+    const d = t.direction;
+    if (d == null) continue;
+    const dv = FLOW_DIR_VEC[d];
+    if (!dv) continue;
+    const nk = keyOf({ x: t.x + dv[0], y: t.y + dv[1] });
+    if (byKey.has(nk)) {
+      forward.set(keyOf(t), nk);
+      hasIncoming.add(nk);
+    }
+  }
+  const visited = new Set<string>();
+  const paths: FlowPath[] = [];
+  const walk = (startKey: string) => {
+    const pts: { x: number; y: number }[] = [];
+    const dirs: [number, number][] = [];
+    let cur: string | undefined = startKey;
+    while (cur && !visited.has(cur)) {
+      visited.add(cur);
+      const t = byKey.get(cur);
+      if (!t) break;
+      pts.push({ x: t.x + 0.5, y: t.y + 0.5 });
+      const dv = t.direction != null ? FLOW_DIR_VEC[t.direction] ?? [0, 0] : [0, 0];
+      dirs.push([dv[0], dv[1]]);
+      cur = forward.get(cur);
+    }
+    return { pts, dirs };
+  };
+  // Heads (no incoming): regular chains.
+  for (const t of tiles) {
+    const k = keyOf(t);
+    if (visited.has(k)) continue;
+    if (hasIncoming.has(k)) continue;
+    const p = walk(k);
+    if (p.pts.length > 0) paths.push(p);
+  }
+  // Cycles / isolated tiles.
+  for (const t of tiles) {
+    const k = keyOf(t);
+    if (visited.has(k)) continue;
+    const p = walk(k);
+    if (p.pts.length > 0) paths.push(p);
+  }
+  return paths;
+}
+
+// Direction marks along each chain. Sample every FLOW_ARROW_EVERY tiles
+// plus a guaranteed mid-tile so short segments still get one. Each
+// mark is drawn as an OPEN "<" shape (two strokes meeting at the tip) —
+// open so SVG doesn't auto-fill the triangle. That lets us merge every
+// mark into the same single <path> as the polyline (one stroke pass).
+const FLOW_ARROW_EVERY = 5;
+const FLOW_ICON_EVERY = 6;       // tiles between item icons / labels along a lane
+
+// Lane offsets (perpendicular to flow direction) and stroke geometry.
+// 0 = centred (single-line rendering). ±FLOW_LANE_OFFSET = the two
+// lanes of a 1-tile-wide belt; sized to leave a visible gap between
+// the lane strokes inside the tile footprint.
+const FLOW_LANE_OFFSET = 0.22;
+const FLOW_STROKE_CENTER = 0.18;
+const FLOW_STROKE_LANE   = 0.15;
+// Arrow size shrinks when drawn inside a lane (half the visual room).
+const FLOW_ARROW_LEN_CENTER = 0.32;
+const FLOW_ARROW_WIDTH_CENTER = 0.34;
+const FLOW_ARROW_LEN_LANE = 0.22;
+const FLOW_ARROW_WIDTH_LANE = 0.22;
+// Identifier glyphs that ride the lane line.
+const FLOW_ICON_SIZE = 0.55;
+const FLOW_LABEL_FONT_SIZE = 0.42;
+
+// Mitred offset polyline for one chain. Naive per-point offsetting
+// breaks at corners: the perpendicular flips between two consecutive
+// edges, so the two lane lines cross each other through the bend.
+// Compute the offset point as the intersection of the two offset edges
+// meeting at each interior vertex; for unit edge perpendiculars at
+// half-angle α the mitre formula is `pt + d * (pIn + pOut) / (1 + pIn·pOut)`.
+// Straight segments collapse to the simple `pt + d * perp` case.
+type LaneGeom = {
+  offPts: { x: number; y: number }[];
+  d: string;
+  dirs: [number, number][];   // per-tile flow direction (unchanged from chain)
+  edgeDirs: [number, number][]; // per-edge unit direction (length N-1)
+};
+
+function buildLaneGeom(p: FlowPath, offset: number): LaneGeom {
+  const n = p.pts.length;
+  if (n === 0) return { offPts: [], d: '', dirs: [], edgeDirs: [] };
+  if (n === 1) {
+    const [dx, dy] = p.dirs[0];
+    const perpX = dy, perpY = -dx;
+    const c = { x: p.pts[0].x + offset * perpX, y: p.pts[0].y + offset * perpY };
+    const d = dx === 0 && dy === 0
+      ? `M ${c.x - 0.15} ${c.y} L ${c.x + 0.15} ${c.y}`
+      : `M ${c.x - 0.4 * dx} ${c.y - 0.4 * dy} L ${c.x + 0.4 * dx} ${c.y + 0.4 * dy}`;
+    return { offPts: [c], d, dirs: [p.dirs[0]], edgeDirs: [] };
+  }
+  const edgeDirs: [number, number][] = [];
+  const edgePerps: [number, number][] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const ex = p.pts[i + 1].x - p.pts[i].x;
+    const ey = p.pts[i + 1].y - p.pts[i].y;
+    const len = Math.hypot(ex, ey) || 1;
+    const ux = ex / len, uy = ey / len;
+    edgeDirs.push([ux, uy]);
+    edgePerps.push([uy, -ux]);
+  }
+  const offPts: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    let sx: number, sy: number;
+    if (i === 0) [sx, sy] = edgePerps[0];
+    else if (i === n - 1) [sx, sy] = edgePerps[n - 2];
+    else {
+      const [ix, iy] = edgePerps[i - 1];
+      const [ox, oy] = edgePerps[i];
+      const dot = ix * ox + iy * oy;
+      const denom = 1 + dot;
+      if (Math.abs(denom) < 1e-6) { sx = ix; sy = iy; }
+      else { sx = (ix + ox) / denom; sy = (iy + oy) / denom; }
+    }
+    offPts.push({ x: p.pts[i].x + offset * sx, y: p.pts[i].y + offset * sy });
+  }
+  let d = `M ${offPts[0].x} ${offPts[0].y}`;
+  for (let i = 1; i < n; i++) d += ` L ${offPts[i].x} ${offPts[i].y}`;
+  return { offPts, d, dirs: p.dirs, edgeDirs };
+}
+
+// Build the full SVG `d` (polyline + arrow "<" marks) for one lane.
+// Takes pre-built chains so the caller can share the buildFlowPaths
+// pass across all three lane variants (center / left / right).
+function flowLaneDFromPaths(paths: FlowPath[], offset: number): string {
+  if (paths.length === 0) return '';
+  const lane = offset !== 0;
+  const arrowLen   = lane ? FLOW_ARROW_LEN_LANE   : FLOW_ARROW_LEN_CENTER;
+  const arrowWidth = lane ? FLOW_ARROW_WIDTH_LANE : FLOW_ARROW_WIDTH_CENTER;
+  const parts: string[] = [];
+  for (const p of paths) {
+    const g = buildLaneGeom(p, offset);
+    if (g.d) parts.push(g.d);
+    if (g.offPts.length === 0) continue;
+    // Arrows: at sampled tile indices, pointing along edge direction
+    // out of that tile (or the inbound edge for the last tile).
+    const sampled = new Set<number>([Math.floor(g.offPts.length / 2)]);
+    for (let i = Math.floor(FLOW_ARROW_EVERY / 2); i < g.offPts.length; i += FLOW_ARROW_EVERY) {
+      sampled.add(i);
+    }
+    for (const i of sampled) {
+      const edgeIdx = i < g.edgeDirs.length ? i : g.edgeDirs.length - 1;
+      const ed = g.edgeDirs[edgeIdx] ?? g.dirs[i];
+      const dx = ed[0], dy = ed[1];
+      if (dx === 0 && dy === 0) continue;
+      const cx = g.offPts[i].x, cy = g.offPts[i].y;
+      const tipX = cx + arrowLen * dx;
+      const tipY = cy + arrowLen * dy;
+      const baseX = cx - arrowLen * 0.1 * dx;
+      const baseY = cy - arrowLen * 0.1 * dy;
+      const lx = baseX + (arrowWidth / 2) * -dy;
+      const ly = baseY + (arrowWidth / 2) *  dx;
+      const rx = baseX - (arrowWidth / 2) * -dy;
+      const ry = baseY - (arrowWidth / 2) *  dx;
+      parts.push(`M ${lx} ${ly} L ${tipX} ${tipY} L ${rx} ${ry}`);
+    }
+  }
+  return parts.join(' ');
+}
+
+// Per-lane positions where an item icon or label should ride. Sampled
+// off the same offset polyline as the lane line so they sit ON the
+// stroke. Anchored at midpoint and stepped every FLOW_ICON_EVERY tiles
+// either side, then sorted ascending so callers receive positions in
+// flow order (start → end). That ordering matters for mixed-item
+// lanes: item cycling (`items[idx % items.length]`) anchors items[0]
+// at the head of the belt, items[1] next, and so on.
+function flowIconPositionsFromPaths(paths: FlowPath[], offset: number): { x: number; y: number }[] {
+  if (paths.length === 0) return [];
+  const out: { x: number; y: number }[] = [];
+  for (const p of paths) {
+    const g = buildLaneGeom(p, offset);
+    if (g.offPts.length === 0) continue;
+    const mid = Math.floor(g.offPts.length / 2);
+    const sampled = new Set<number>([mid]);
+    for (let i = mid - FLOW_ICON_EVERY; i >= 0; i -= FLOW_ICON_EVERY) sampled.add(i);
+    for (let i = mid + FLOW_ICON_EVERY; i < g.offPts.length; i += FLOW_ICON_EVERY) sampled.add(i);
+    const sorted = [...sampled].sort((a, b) => a - b);
+    for (const i of sorted) out.push({ x: g.offPts[i].x, y: g.offPts[i].y });
+  }
+  return out;
+}
+
+// Hashed per-item colour. Keep in sync with the visual-test's
+// `itemColor` so segments and the flow-test agree at a glance. Empty
+// lane → desaturated grey so it reads as "lane-with-no-known-item"
+// rather than disappearing.
+function flowItemColor(item: string | null | undefined): string {
+  if (!item) return '#5a5a5a';
+  let h = 0;
+  for (let i = 0; i < item.length; i++) h = (h * 31 + item.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  const sat = 70 + ((h >>> 8) % 20);
+  const lig = 62 + ((h >>> 16) % 18);
+  return `hsl(${hue} ${sat}% ${lig}%)`;
+}
+
+// Tiles alive at `tick` per half-open [tb, tr). Duplicate (x,y) entries
+// from quick-replace swaps coexist in the raw list with adjacent
+// non-overlapping windows; the filter naturally keeps at most one
+// per (x,y) at any single tick.
+function activeTiles(tiles: FlowTileLocation[] | undefined, tick: number): FlowTileLocation[] {
+  if (!tiles?.length) return [];
+  const out: FlowTileLocation[] = [];
+  for (const t of tiles) {
+    if (t.tb > tick) continue;
+    if (t.tr !== undefined && tick >= t.tr) continue;
+    out.push(t);
+  }
+  return out;
+}
+
+// Distinct items present on a lane at `tick`. The underlying data is a
+// temporal ledger — each entry is one [tb, tr) presence interval, with
+// tr === undefined meaning "still alive at run end". Duplicate items
+// (same lane, multiple non-overlapping intervals) collapse to one
+// entry; order preserved from the source ledger so identifier cycling
+// stays deterministic across renders.
+function activeItems(side: { items?: FlowLaneInterval[] } | undefined, tick: number): string[] {
+  const intervals = side?.items;
+  if (!intervals?.length) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of intervals) {
+    if (x.tb > tick) continue;
+    if (x.tr !== undefined && tick >= x.tr) continue;
+    if (seen.has(x.item)) continue;
+    seen.add(x.item);
+    out.push(x.item);
+  }
+  return out;
+}
+
+// Stable string key for two arrays (order-preserving) — used to detect
+// symmetric lanes so we can collapse to a single centred line.
+function sameItemList(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+// Prefer the filter-icon sprite (used by splitter/inserter overlays —
+// covers the items a runner sets explicitly), fall back to recipe-icon
+// (covers crafted items), otherwise no icon — the colour alone has to
+// carry the encoding. Raw resources (coal, iron-ore) often hit the
+// no-sprite path.
+function itemSpriteId(item: string, sprites: SpriteAtlas | null): string | null {
+  if (!sprites) return null;
+  const f = `f:${item}`;
+  if (sprites[f]) return f;
+  const r = `r:${item}`;
+  if (sprites[r]) return r;
+  return null;
+}
+
+
 // Roboport overlay: each roboport renders the count of bots queued waiting
 // for a charger as a text label centred on the entity. Charging caps at 4
 // (one per charge pad — always working when non-zero) and isn't shown.
@@ -82,6 +396,44 @@ function SplitterArrow({ x, y, rotDeg }: { x: number; y: number; rotDeg: number 
             transform={`translate(${SPLITTER_ARROW_SHADOW_OFFSET} ${SPLITTER_ARROW_SHADOW_OFFSET})`} />
       <path d={SPLITTER_ARROW_PATH} fill="#ffe000" />
     </g>
+  );
+}
+
+// One row in the Layers popover. Checkbox + label; sub-rows are
+// indented and dim when their parent ("Alt mode") is off. The whole
+// row is clickable to keep target areas finger-friendly.
+function LayerCheck({
+  label,
+  active,
+  onChange,
+  hint,
+  sub,
+  disabled,
+}: {
+  label: string;
+  active: boolean;
+  onChange: (next: boolean) => void;
+  hint?: string;
+  sub?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      className={
+        'run-map-layer-row' +
+        (sub ? ' is-sub' : '') +
+        (disabled ? ' is-disabled' : '')
+      }
+      title={hint}
+    >
+      <input
+        type="checkbox"
+        checked={active}
+        disabled={disabled}
+        onChange={e => onChange(e.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
   );
 }
 
@@ -158,6 +510,11 @@ export type MapViewProps = {
   // MapView pans/zooms so this bbox occupies the centre of the canvas
   // with ~30% padding. Used by overlay hosts to "go look at this".
   focusBBox?: { x: number; y: number; w: number; h: number } | null;
+  // Optional belt-segment flow data. When present, a toggleable layer
+  // renders each segment as a continuous coloured polyline with
+  // directional arrows. Pass run.flow.beltSegments here. Cursor-driven
+  // tb/tr visibility mirrors the entity layer.
+  flowSegments?: FlowSegmentLite[];
 };
 
 export function MapView({
@@ -170,6 +527,7 @@ export function MapView({
   overlays,
   onTick,
   focusBBox,
+  flowSegments,
 }: MapViewProps) {
   const [data, setData] = useState<MapData | null>(null);
   const [sprites, setSprites] = useState<SpriteAtlas | null>(null);
@@ -180,7 +538,11 @@ export function MapView({
 
   type VB = { x: number; y: number; w: number; h: number };
   const [vb, setVb] = useState<VB | null>(null);
-  const [tooltip, setTooltip] = useState<{ name: string; px: number; py: number; sx: number; sy: number } | null>(null);
+  const [tooltip, setTooltip] = useState<
+    | { kind: 'entity'; name: string; en: number; px: number; py: number; sx: number; sy: number }
+    | { kind: 'flow'; id: string; sx: number; sy: number }
+    | null
+  >(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   // DOM refs kept as state (set via callback refs) so effects can
   // re-run when the elements attach. Plain useRef would race the
@@ -193,6 +555,42 @@ export function MapView({
   const [splittersEl, setSplittersEl] = useState<SVGGElement | null>(null);
   const [insertersEl, setInsertersEl] = useState<SVGGElement | null>(null);
   const [roboportsEl, setRoboportsEl] = useState<SVGGElement | null>(null);
+
+  // Overlay-visibility toggles. Each overlay is rendered once; the
+  // toggle hides the wrapper <g> via display:none so cursor-walked DOM
+  // state (recipe / splitter / inserter / entity / flow) survives
+  // toggling. Flow overlay defaults OFF (large dataset, opt-in for
+  // analysis). Alt mode groups recipe / splitter-arrow / inserter-
+  // filter overlays — FBSR's "alt info" idea — so a single switch
+  // strips them all without losing the per-overlay sub-controls.
+  const [showFlow, setShowFlow] = useState(false);
+  const [altMode, setAltMode] = useState(true);
+  const [altRecipes, setAltRecipes] = useState(true);
+  const [altSplitterArrows, setAltSplitterArrows] = useState(true);
+  const [altInserterFilters, setAltInserterFilters] = useState(true);
+  const [showBotQueue, setShowBotQueue] = useState(true);
+  const [showPlayerPos, setShowPlayerPos] = useState(true);
+  const [layersOpen, setLayersOpen] = useState(false);
+  const layersMenuRef = useRef<HTMLDivElement>(null);
+
+  // Effective visibility per layer — alt-mode is a master switch over
+  // its three sub-overlays.
+  const showRecipes = altMode && altRecipes;
+  const showSplitterArrows = altMode && altSplitterArrows;
+  const showInserterFilters = altMode && altInserterFilters;
+
+  // Close the layers menu when the user clicks anywhere outside it.
+  useEffect(() => {
+    if (!layersOpen) return;
+    const onDocPointerDown = (e: PointerEvent) => {
+      const el = layersMenuRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && el.contains(e.target)) return;
+      setLayersOpen(false);
+    };
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, [layersOpen]);
   // Chrome layer: HTML inside canvas-wrap, exposed to overlay components
   // via context so they can portal screen-space elements (legends, etc.)
   // that don't pan/zoom with the map.
@@ -212,7 +610,6 @@ export function MapView({
   // Roboport state cursor: tracks last applied event index per marker (by
   // unitNumber, since roboport markers don't carry `en`).
   const lastRoboportIdx = useRef(new Map<number, number>());
-
   // Fetch map data + sprites in parallel.
   useEffect(() => {
     let cancelled = false;
@@ -554,27 +951,42 @@ export function MapView({
   };
 
   // Hover tooltip — event delegation on the SVG. Recipe overlays already
-  // disable pointer events, so the topmost hit is always an entity <use>.
+  // disable pointer events, so the topmost hit is normally an entity <use>.
+  // Flow segments expose their wrapper <g data-flow-id> via the path stroke,
+  // so a SVGPathElement hit walks up to find the segment ID.
   const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     if (dragRef.current) { if (tooltip) setTooltip(null); return; }
     const t = e.target as Element;
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    if (t instanceof SVGPathElement) {
+      const g = t.closest('[data-flow-id]');
+      if (g) {
+        const id = g.getAttribute('data-flow-id') ?? '';
+        setTooltip({ kind: 'flow', id, sx, sy });
+        return;
+      }
+    }
     if (!(t instanceof SVGUseElement)) { if (tooltip) setTooltip(null); return; }
     const name = t.getAttribute('data-name');
     const pxStr = t.getAttribute('data-px');
     const pyStr = t.getAttribute('data-py');
+    const enStr = t.getAttribute('data-en');
     if (name === null || pxStr === null || pyStr === null) {
       if (tooltip) setTooltip(null);
       return;
     }
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const rect = wrap.getBoundingClientRect();
     setTooltip({
+      kind: 'entity',
       name,
+      en: enStr === null ? NaN : parseInt(enStr, 10),
       px: parseFloat(pxStr),
       py: parseFloat(pyStr),
-      sx: e.clientX - rect.left,
-      sy: e.clientY - rect.top,
+      sx,
+      sy,
     });
   };
   const onMouseLeave = () => { if (tooltip) setTooltip(null); };
@@ -743,6 +1155,144 @@ export function MapView({
     ));
   }, [data, roboportMarkers]);
 
+  // Flow segment SVG nodes. Per-segment routing:
+  //   • Both sides empty → ONE neutral centred line (cheap, the common case).
+  //   • Both sides same item set → ONE centred coloured line + identifiers along it.
+  //   • Sides differ (or only one carries an item) → TWO lane lines, each
+  //     coloured by its own item set + identifiers along that lane.
+  // Identifiers are item icons when the atlas has a sprite, otherwise
+  // a short text label (raw resources like `coal` / `iron-ore` have no
+  // sprite, so colour-alone is unreadable without these labels).
+  //
+  // Tick-filtered: the per-item lifetime intervals from the flow prep
+  // are honoured here — only items whose [tb, tr) covers `tick` are
+  // included. Segment-level visibility (the outer tb/tr) is folded
+  // into the same render, so out-of-life segments simply don't emit
+  // a node. Geometry is precomputed in `flowGeometry`, so the per-
+  // tick work is one `activeItems()` scan per lane + JSX assembly.
+  const flowSegmentNodes = useMemo(() => {
+    if (!flowSegments || flowSegments.length === 0) return null;
+    const renderIdentifier = (item: string, x: number, y: number, keyPrefix: string) => {
+      const sid = itemSpriteId(item, sprites);
+      if (sid) {
+        return (
+          <use
+            key={keyPrefix}
+            href={`#${sid}`}
+            x={x - FLOW_ICON_SIZE / 2}
+            y={y - FLOW_ICON_SIZE / 2}
+            width={FLOW_ICON_SIZE}
+            height={FLOW_ICON_SIZE}
+            style={{ pointerEvents: 'none' }}
+            data-item={item}
+          />
+        );
+      }
+      return (
+        <text
+          key={keyPrefix}
+          x={x}
+          y={y}
+          fontSize={FLOW_LABEL_FONT_SIZE}
+          fontWeight={700}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fill={flowItemColor(item)}
+          stroke="#000"
+          strokeWidth={0.08}
+          paintOrder="stroke"
+          style={{ pointerEvents: 'none', fontFamily: 'Titillium Web, sans-serif' }}
+          data-item={item}
+        >
+          {item}
+        </text>
+      );
+    };
+
+    // Stroke colour rule: 0 items → grey; 1 item → that item's colour;
+    // >1 items (mixed) → neutral grey, with the cycled icons carrying
+    // the encoding (one colour cannot represent a mix faithfully).
+    const laneStroke = (items: string[]) =>
+      items.length === 0 ? '#9a9a9a' :
+      items.length === 1 ? flowItemColor(items[0]) :
+      '#9a9a9a';
+
+    const out: ReactNode[] = [];
+    for (const s of flowSegments) {
+      if (tick < s.tb) continue;
+      if (s.tr !== undefined && tick >= s.tr) continue;
+      const tilesNow = activeTiles(s.tileLocations, tick);
+      if (tilesNow.length === 0) continue;
+      // Build chains once; reuse for centre + both lane offsets.
+      const paths = buildFlowPaths(tilesNow);
+      if (paths.length === 0) continue;
+      const leftItems  = activeItems(s.contents?.left,  tick);
+      const rightItems = activeItems(s.contents?.right, tick);
+      const symmetric = sameItemList(leftItems, rightItems);
+      const empty = leftItems.length === 0 && rightItems.length === 0;
+
+      const children: ReactNode[] = [];
+      if (empty || symmetric) {
+        const d = flowLaneDFromPaths(paths, 0);
+        if (empty) {
+          if (d) children.push(
+            <path key="c" d={d} fill="none" stroke="#9a9a9a"
+                  strokeWidth={FLOW_STROKE_CENTER}
+                  strokeOpacity={0.55}
+                  strokeLinecap="round" strokeLinejoin="round" />
+          );
+        } else {
+          if (d) children.push(
+            <path key="c" d={d} fill="none" stroke={laneStroke(leftItems)}
+                  strokeWidth={FLOW_STROKE_CENTER}
+                  strokeLinecap="round" strokeLinejoin="round" />
+          );
+          const positions = flowIconPositionsFromPaths(paths, 0);
+          positions.forEach((pos, idx) => {
+            const item = leftItems[idx % leftItems.length];
+            children.push(renderIdentifier(item, pos.x, pos.y, `c-id-${idx}`));
+          });
+        }
+      } else {
+        const lD = flowLaneDFromPaths(paths, +FLOW_LANE_OFFSET);
+        const rD = flowLaneDFromPaths(paths, -FLOW_LANE_OFFSET);
+        if (lD) children.push(
+          <path key="l" d={lD} fill="none" stroke={laneStroke(leftItems)}
+                strokeWidth={FLOW_STROKE_LANE}
+                strokeOpacity={leftItems.length ? 1 : 0.55}
+                strokeLinecap="round" strokeLinejoin="round" />
+        );
+        if (rD) children.push(
+          <path key="r" d={rD} fill="none" stroke={laneStroke(rightItems)}
+                strokeWidth={FLOW_STROKE_LANE}
+                strokeOpacity={rightItems.length ? 1 : 0.55}
+                strokeLinecap="round" strokeLinejoin="round" />
+        );
+        if (leftItems.length > 0) {
+          const lPos = flowIconPositionsFromPaths(paths, +FLOW_LANE_OFFSET);
+          lPos.forEach((pos, idx) => {
+            const item = leftItems[idx % leftItems.length];
+            children.push(renderIdentifier(item, pos.x, pos.y, `l-id-${idx}`));
+          });
+        }
+        if (rightItems.length > 0) {
+          const rPos = flowIconPositionsFromPaths(paths, -FLOW_LANE_OFFSET);
+          rPos.forEach((pos, idx) => {
+            const item = rightItems[idx % rightItems.length];
+            children.push(renderIdentifier(item, pos.x, pos.y, `r-id-${idx}`));
+          });
+        }
+      }
+
+      out.push(
+        <g key={s.id} data-flow-id={s.id}>
+          {children}
+        </g>
+      );
+    }
+    return out;
+  }, [flowSegments, sprites, tick]);
+
   // Player marker — current interpolated position
   const playerPos = useMemo(() => {
     if (!data?.playerTrack) return null;
@@ -797,6 +1347,84 @@ export function MapView({
             <option value={600}>600×</option>
             <option value={1200}>1200×</option>
           </select>
+          <div className="run-map-layers-menu" ref={layersMenuRef}>
+            <button
+              className={'run-map-btn run-map-layers-btn' + (layersOpen ? ' is-open' : '')}
+              onClick={() => setLayersOpen(o => !o)}
+              aria-haspopup="true"
+              aria-expanded={layersOpen}
+            >Layers ▾</button>
+            {layersOpen && (
+              <div className="run-map-layers-pop" role="menu">
+                {flowSegments && flowSegments.length > 0 && (
+                  <LayerCheck
+                    label="Flow segments"
+                    active={showFlow}
+                    onChange={setShowFlow}
+                    hint="Belt-segment polylines with flow-direction arrows"
+                  />
+                )}
+                {(recipeMachines.length > 0 ||
+                  splitterMarkers.length > 0 ||
+                  inserterMarkers.length > 0) && (
+                  <>
+                    <LayerCheck
+                      label="Alt mode"
+                      active={altMode}
+                      onChange={setAltMode}
+                      hint="Recipe icons + splitter priorities + inserter filters (Factorio's alt-info overlay)"
+                    />
+                    {recipeMachines.length > 0 && (
+                      <LayerCheck
+                        label="Recipe icons"
+                        active={altRecipes}
+                        onChange={setAltRecipes}
+                        sub
+                        disabled={!altMode}
+                        hint="Icon on each assembler / furnace showing its current recipe"
+                      />
+                    )}
+                    {splitterMarkers.length > 0 && (
+                      <LayerCheck
+                        label="Splitter priorities"
+                        active={altSplitterArrows}
+                        onChange={setAltSplitterArrows}
+                        sub
+                        disabled={!altMode}
+                        hint="Splitter input/output priority arrows and filter icons"
+                      />
+                    )}
+                    {inserterMarkers.length > 0 && (
+                      <LayerCheck
+                        label="Inserter filters"
+                        active={altInserterFilters}
+                        onChange={setAltInserterFilters}
+                        sub
+                        disabled={!altMode}
+                        hint="Filter icons + blacklist marks on filter inserters"
+                      />
+                    )}
+                  </>
+                )}
+                {roboportMarkers.length > 0 && (
+                  <LayerCheck
+                    label="Bot-queue counts"
+                    active={showBotQueue}
+                    onChange={setShowBotQueue}
+                    hint="Waiting-bot count over each roboport"
+                  />
+                )}
+                {data?.playerTrack && (
+                  <LayerCheck
+                    label="Player position"
+                    active={showPlayerPos}
+                    onChange={setShowPlayerPos}
+                    hint="Player position marker"
+                  />
+                )}
+              </div>
+            )}
+          </div>
           <button className="run-map-btn" onClick={resetView} aria-label="Reset view">⤢</button>
         </div>
       )}
@@ -814,14 +1442,44 @@ export function MapView({
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
         >
-          <defs>{symbols}</defs>
+          <defs>
+            {symbols}
+            {/* Flow halo: one shared filter that paints a thin dark
+                outline behind every stroke in the flow layer. Applied
+                to the layer <g> so all segments share one filter pass
+                instead of one halo path per segment. */}
+            <filter id="run-map-flow-halo" x="-10%" y="-10%" width="120%" height="120%"
+                    primitiveUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+              <feMorphology in="SourceGraphic" operator="dilate" radius="0.08" result="dilated" />
+              <feColorMatrix in="dilated" type="matrix"
+                             values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="halo" />
+              <feMerge>
+                <feMergeNode in="halo" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
           <g ref={setEntitiesEl} id="run-map-entities">{uses}</g>
-          <g ref={setSplittersEl} id="run-map-splitters" pointerEvents="none">{splitterMarkerNodes}</g>
-          <g ref={setInsertersEl} id="run-map-inserters" pointerEvents="none">{inserterMarkerNodes}</g>
-          <g ref={setRecipesEl} id="run-map-recipes" pointerEvents="none">{recipeUses}</g>
+          <g ref={setSplittersEl} id="run-map-splitters" pointerEvents="none"
+             style={{ display: showSplitterArrows ? '' : 'none' }}>{splitterMarkerNodes}</g>
+          <g ref={setInsertersEl} id="run-map-inserters" pointerEvents="none"
+             style={{ display: showInserterFilters ? '' : 'none' }}>{inserterMarkerNodes}</g>
+          <g ref={setRecipesEl} id="run-map-recipes" pointerEvents="none"
+             style={{ display: showRecipes ? '' : 'none' }}>{recipeUses}</g>
+          {/* Flow segment overlay — drawn over recipe icons so the
+              polylines and arrows aren't hidden by them. Segment
+              visibility AND per-item lifetime filtering both live in
+              the per-tick render (`flowSegmentNodes`) — no imperative
+              DOM walk. Path strokes catch pointer events for the
+              segment-ID tooltip; icons/labels keep pointer-events:none
+              so they don't block entity hover. */}
+          <g id="run-map-flow"
+             filter="url(#run-map-flow-halo)"
+             style={{ display: showFlow ? '' : 'none' }}>{flowSegmentNodes}</g>
           {/* Roboport labels render LAST so the waiting count sits on top of the sprite + recipe icons. */}
-          <g ref={setRoboportsEl} id="run-map-roboports" pointerEvents="none">{roboportMarkerNodes}</g>
-          {playerPos && (
+          <g ref={setRoboportsEl} id="run-map-roboports" pointerEvents="none"
+             style={{ display: showBotQueue ? '' : 'none' }}>{roboportMarkerNodes}</g>
+          {playerPos && showPlayerPos && (
             <g className="run-map-player-marker" pointerEvents="none">
               <circle cx={playerPos[0]} cy={playerPos[1]} r={0.7} className="run-map-player-halo" />
               <circle cx={playerPos[0]} cy={playerPos[1]} r={0.35} className="run-map-player-dot" />
@@ -837,10 +1495,19 @@ export function MapView({
             className="run-map-tooltip"
             style={{ left: tooltip.sx, top: tooltip.sy }}
           >
-            <div className="run-map-tooltip-name">{tooltip.name}</div>
-            <div className="run-map-tooltip-coords">
-              x {tooltip.px.toFixed(1)} · y {tooltip.py.toFixed(1)}
-            </div>
+            {tooltip.kind === 'flow' ? (
+              <div className="run-map-tooltip-name">segment {tooltip.id}</div>
+            ) : (
+              <>
+                <div className="run-map-tooltip-name">{tooltip.name}</div>
+                <div className="run-map-tooltip-coords">
+                  x {tooltip.px.toFixed(1)} · y {tooltip.py.toFixed(1)}
+                </div>
+                {Number.isFinite(tooltip.en) && (
+                  <div className="run-map-tooltip-unit">#{tooltip.en}</div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>

@@ -26,6 +26,8 @@ const REACH      = PROTO.inserterReach;            // name → 1|2 (keys = inser
 const INSERTERS  = new Set(Object.keys(REACH));
 const MACHINE_FP = PROTO.footprints.machine;       // name → footprint size
 const MINER_FP   = PROTO.footprints.miner;
+const RECIPE_OVERRIDE = PROTO.recipeOutputOverride;          // recipe → item (mismatched-name recipes)
+const FLUID_ONLY      = new Set(PROTO.fluidOnlyRecipes);     // recipes whose output is a fluid → no belt item
 
 // ── geometry (cardinal dirs only, 16-way; y points down) ──────
 const DV   = { 0: { x: 0, y: -1 }, 4: { x: 1, y: 0 }, 8: { x: 0, y: 1 }, 12: { x: -1, y: 0 } }; // N E S W
@@ -78,7 +80,24 @@ export function applyEvent(state, ev) {
     case 'entity-removed':  return onRemoved(state, ev);
     case 'entity-mutated':  return onMutated(state, ev);
     case 'entity-replaced': return onReplaced(state, ev);
+    case 'recipe-changed':  return onRecipeChanged(state, ev);
   }
+}
+
+// A machine's recipe is the item-source for any inserter draining it. Edges live
+// across recipe changes (they're topological), so the recipe is kept as a per-machine
+// TIMELINE — contents resolution later intersects it with each draining edge's
+// lifetime. Successive same-recipe events collapse; a real change closes the prior
+// interval and opens a new one.
+function onRecipeChanged(state, ev) {
+  const m = state.machines.get(ev.unit);
+  if (!m) return;
+  const last = m.recipes[m.recipes.length - 1];
+  if (last) {
+    if (last.recipe === ev.recipe) return;
+    if (last.tr == null) last.tr = ev.tick;
+  }
+  m.recipes.push({ recipe: ev.recipe, tb: ev.tick, tr: null });
 }
 
 function onBuilt(state, ev) {
@@ -120,6 +139,10 @@ function registerInserter(state, ev) {
   const r = {
     kind: 'inserter', unit: ev.unit, name: ev.name, location: ev.location, tile: floorTile(ev.location),
     direction: ev.direction ?? 0, reach: REACH[ev.name] ?? 1, edgeId: null, tb: ev.tick,
+    // Filter spec narrows which of a drained machine's outputs actually rides the belt.
+    useFilters: !!ev.inserterUseFilters,
+    filterMode: ev.inserterFilterMode ?? null,
+    filters: Array.isArray(ev.inserterFilters) ? ev.inserterFilters.slice() : [],
   };
   state.inserters.set(ev.unit, r);
   mintOwnerEdge(state, r, ev.tick);
@@ -132,6 +155,7 @@ function registerMiner(state, ev) {
   const r = {
     kind: 'miner', unit: ev.unit, name: ev.name, location: ev.location, direction: ev.direction ?? 0,
     footprint: fp, tiles, dropTile: minerDrop(ev.location, ev.direction ?? 0, fp), edgeId: null, tb: ev.tick,
+    resource: Array.isArray(ev.resources) ? (ev.resources[0] ?? null) : null,   // item this drill drops onto its belt
   };
   state.miners.set(ev.unit, r);
   writeTiles(state, tiles, ev.unit, 'miner', ev.name);
@@ -139,7 +163,12 @@ function registerMiner(state, ev) {
 }
 
 function mutateInserter(state, ev) {
-  rotateOwner(state, state.inserters.get(ev.unit), ev);
+  const r = state.inserters.get(ev.unit);
+  if (!r) return;
+  if (ev.inserterUseFilters !== undefined) r.useFilters = !!ev.inserterUseFilters;
+  if (ev.inserterFilterMode !== undefined) r.filterMode = ev.inserterFilterMode;
+  if (Array.isArray(ev.inserterFilters))   r.filters = ev.inserterFilters.slice();
+  rotateOwner(state, r, ev);
 }
 
 function mutateMiner(state, ev) {
@@ -194,7 +223,7 @@ function registerMachine(state, ev) {
   const fp = MACHINE_FP[ev.name];
   if (fp == null) return;
   const { tiles } = footprint(ev.location, fp);
-  state.machines.set(ev.unit, { unit: ev.unit, name: ev.name, location: ev.location, footprint: fp, tiles, tb: ev.tick });
+  state.machines.set(ev.unit, { unit: ev.unit, name: ev.name, location: ev.location, footprint: fp, tiles, tb: ev.tick, recipes: [] });
   writeTiles(state, tiles, ev.unit, 'machine', ev.name);
   for (const t of tiles) openEndpointAt(state, t, ev.unit, 'machine', ev.tick);   // reopen edges if this is a replace
 }
@@ -463,10 +492,132 @@ export function rebuildLiveEdgeKeys(state) {
   return out;
 }
 
+// ── contents resolution (item-source → seed windows; belt-belt lane mode) ──
+// Edges stay item-free during the fold (purely topological); item identity is
+// layered on once at finalize, when every timeline is closed. Owned drain/miner
+// edges get `itemWindows` (what rides the belt drop, over which sub-intervals);
+// belt↔belt edges get `contentSide` (which consumer lane a cross-segment hand-off
+// feeds). contents.mjs consumes both to seed + propagate belt-lane contents.
+
+function annotateContents(state, e) {
+  if (e.minerUnit != null)    return resolveMinerWindows(state, e);
+  if (e.inserterUnit != null) return resolveInserterEdge(state, e);
+  return resolveBeltContentSide(state, e);
+}
+
+// Inserter edges split three ways for contents:
+//   • machine pickup → DRAIN: a static item source (recipe output) seeding the drop
+//     belt — resolved to itemWindows.
+//   • belt pickup + belt drop → TRANSFER: the inserter ferries the source belt's
+//     live lane contents onto the drop belt's lane, narrowed by its filter. Modeled
+//     as a propagation edge (contentSide = drop lane) so contents.mjs routes the
+//     source segment's contents through it like a sideload — the item isn't known
+//     statically, it's whatever the source belt carries.
+//   • belt pickup + machine drop = FEED: the belt is consumed, nothing to seed.
+function resolveInserterEdge(state, e) {
+  if (e.from.units.some(u => u.category === 'machine')) return resolveDrainWindows(state, e);
+  const fromBelt = e.from.units.some(u => u.category === 'belt');
+  const toBelt   = e.to.units.some(u => u.category === 'belt');
+  if (!fromBelt || !toBelt) return;
+  const side = e.to.side;
+  if (side !== 'left' && side !== 'right') return;   // need a concrete drop lane
+  e.contentSide = side;
+  e.transferFilter = filterSpec(state.inserters.get(e.inserterUnit));
+}
+
+// Inserter filter as a content gate (which items it will move), or null when it
+// passes everything.
+function filterSpec(r) {
+  if (!r || !r.useFilters || !r.filters?.length) return null;
+  const items = r.filters.map(filterEntryToItem).filter(Boolean);
+  if (!items.length) return null;
+  return { mode: r.filterMode ?? 'whitelist', items };
+}
+
+// Miner → belt: the drill's mined resource rides the drop belt for the edge's whole
+// life (the edge retires with the miner, so the resource is constant across it).
+function resolveMinerWindows(state, e) {
+  const res = state.miners.get(e.minerUnit)?.resource;
+  if (!res || !endpointHasBelt(e.to)) return;
+  e.itemWindows = [{ item: res, tb: e.tb, tr: e.tr ?? null }];
+}
+
+// Inserter drain → belt: pickup(from) is a machine, drop(to) is the belt. Overlay
+// each occupying machine's recipe timeline on the edge lifetime, map recipe → output
+// item, narrow by the inserter's filter. Feed edges (pickup belt) yield no windows —
+// the belt is the source there, not a sink.
+function resolveDrainWindows(state, e) {
+  const r = state.inserters.get(e.inserterUnit);
+  const windows = [];
+  for (const fu of e.from.units) {
+    if (fu.category !== 'machine') continue;
+    const m = state.machines.get(fu.unit);
+    if (!m) continue;
+    const fTr = fu.tr ?? (e.tr ?? null);
+    for (const rc of (m.recipes ?? [])) {
+      const item = recipeOutputItem(rc.recipe);
+      if (item == null || !passesFilter(item, r)) continue;
+      const w = intersectIvs([e.tb, e.tr ?? null], [fu.tb, fTr], [rc.tb, rc.tr ?? null]);
+      if (w) windows.push({ item, tb: w[0], tr: w[1] });
+    }
+  }
+  if (windows.length) e.itemWindows = windows;
+}
+
+// Cross-segment belt hand-off lane. Recompute from the final feeder/consumer belts
+// when BOTH are still live (robust if the mint-time `to.side` was left stale by a
+// late rotation). But a retired edge's endpoints are gone from state.belts, where a
+// blind recompute would fall back to 'right' and clobber the correct mint-time side
+// — so for those, keep `e.to.side` (computed by mintBeltEdge while both were live).
+function resolveBeltContentSide(state, e) {
+  const fu = lastUnit(e.from), cu = lastUnit(e.to);
+  e.contentSide = (state.belts.get(fu) && state.belts.get(cu))
+    ? beltToBeltSide(state, fu, cu)
+    : (e.to.side ?? 'right');
+}
+
+function recipeOutputItem(recipe) {
+  if (!recipe) return null;
+  if (FLUID_ONLY.has(recipe)) return null;
+  return RECIPE_OVERRIDE[recipe] ?? recipe;
+}
+
+function filterEntryToItem(f) {
+  if (typeof f === 'string') return f;
+  if (f && typeof f === 'object') return f.name ?? f.item ?? null;
+  return null;
+}
+
+function passesFilter(item, r) {
+  if (!r || !r.useFilters || !r.filters?.length) return true;
+  const items = r.filters.map(filterEntryToItem).filter(Boolean);
+  if (items.length === 0) return true;
+  const mode = r.filterMode ?? 'whitelist';
+  if (mode === 'whitelist') return items.includes(item);
+  if (mode === 'blacklist') return !items.includes(item);
+  return true;
+}
+
+const lastUnit = (ep) => ep.units[ep.units.length - 1]?.unit ?? null;
+const endpointHasBelt = (ep) => ep.units.some(u => u.category === 'belt');
+
+// Half-open [tb, tr) intersection of N intervals; null tr ⇒ +∞. Returns [tb, tr] or null.
+function intersectIvs(...ivs) {
+  const INF = Number.POSITIVE_INFINITY;
+  let lo = -INF, hi = INF;
+  for (const [a, b] of ivs) {
+    if (a > lo) lo = a;
+    const B = b == null ? INF : b;
+    if (B < hi) hi = B;
+  }
+  return hi <= lo ? null : [lo, hi === INF ? null : hi];
+}
+
 // The shipped edge ledger: every edge ever minted, build-ordered. Each record
-// is already plain JSON — { id, tb, tr?, from, to, inserterUnit?|minerUnit? },
-// each endpoint a { tile?, units[], segs?, side? }. Owner-less records are
-// belt↔belt edges. Consumers slice the unit + segment timelines by tick.
+// is already plain JSON — { id, tb, tr?, from, to, inserterUnit?|minerUnit?,
+// itemWindows?|contentSide? }, each endpoint a { tile?, units[], segs?, side? }.
+// Owner-less records are belt↔belt edges. Consumers slice the timelines by tick.
 export function finalize(state) {
+  for (const e of state.edges.values()) annotateContents(state, e);
   return { edges: [...state.edges.values()].sort((a, b) => (a.tb - b.tb) || a.id.localeCompare(b.id)) };
 }

@@ -26,6 +26,7 @@ import { buildMergedEntities } from './lib/layout/merge-entities.mjs';
 import { createFlowState } from './lib/flow/state.mjs';
 import * as segments from './lib/flow/segments.mjs';
 import * as edges from './lib/flow/edges.mjs';
+import { attachContents } from './lib/flow/contents.mjs';
 
 // Floor a captured entity location to its tile origin. Inlined — the flow
 // pipeline doesn't otherwise depend on the geometry helpers.
@@ -74,6 +75,10 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
 
   const { beltSegments } = segments.finalize(state, durationTick);
   const { edges: edgeList } = edges.finalize(state);
+
+  // Item-aware post-pass: seed belt-lane contents from drain/miner item windows and
+  // propagate across belt↔belt edges (splitter routing folded in). Writes seg.contents.
+  attachContents(beltSegments, edgeList, durationTick);
 
   const summary = _buildSummary(beltSegments, edgeList);
 

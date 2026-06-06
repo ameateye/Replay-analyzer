@@ -77,16 +77,21 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
   const { edges: edgeList } = edges.finalize(state);
 
   // Item-aware post-pass: seed belt-lane contents from drain/miner item windows and
-  // propagate across belt↔belt edges (splitter routing folded in). Writes seg.contents.
-  attachContents(beltSegments, edgeList, durationTick);
+  // propagate across belt↔belt, belt↔buffer and buffer↔buffer edges (splitter routing
+  // folded in). Writes seg.contents and returns the per-buffer item ledger. Buffers
+  // come straight off the merged stream (content + periodic stock samples), clipped
+  // to the run like the synthesised events.
+  const buffers = mergedStream.filter(m => m.category === 'buffer' && (m.timeBuilt ?? 0) <= durationTick);
+  const bufferContents = attachContents(beltSegments, edgeList, durationTick, buffers);
 
-  const summary = _buildSummary(beltSegments, edgeList);
+  const summary = _buildSummary(beltSegments, edgeList, bufferContents);
 
   return {
     durationTick,
     summary,
     beltSegments,
     edges: edgeList,
+    buffers: bufferContents,
   };
 }
 
@@ -101,7 +106,7 @@ export function synthesiseEventsForRun(runDir, durationTick = Number.MAX_SAFE_IN
   return _synthesiseEvents(merged, durationTick);
 }
 
-function _buildSummary(beltSegments, edges) {
+function _buildSummary(beltSegments, edges, buffers = []) {
   const segmentsByKind = { belt: 0, splitter: 0 };
   for (const s of beltSegments) {
     const k = s.kind ?? 'belt';
@@ -121,6 +126,7 @@ function _buildSummary(beltSegments, edges) {
     edgeCount: edges.length,
     liveEdgeCount: liveEdges,
     edgesByKind,
+    bufferCount: buffers.length,
   };
 }
 

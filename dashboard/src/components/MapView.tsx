@@ -53,6 +53,22 @@ export type FlowSegmentLite = {
   };
 };
 
+// One spatially-connected sub-block of a cluster, with its own lifetime so the
+// layer scrubs. A cluster's members can be disjoint (functional contiguity
+// merges blocks bridged by a shared belt); each piece is drawn separately.
+export type FlowClusterRect = { minX: number; minY: number; maxX: number; maxY: number; tb: number; tr?: number };
+
+export type FlowClusterLite = {
+  id: string;
+  kind: 'machine' | 'furnace' | 'miner' | 'buffer';
+  tb: number;
+  tr?: number;
+  recipe?: string | null;
+  storedItem?: string | null;
+  members?: { unit: number }[];
+  rects: FlowClusterRect[];
+};
+
 const FLOW_DIR_VEC: Record<number, [number, number]> = {
   0:  [0, -1],   // N
   4:  [1,  0],   // E
@@ -271,6 +287,18 @@ function flowItemColor(item: string | null | undefined): string {
   const hue = h % 360;
   const sat = 70 + ((h >>> 8) % 20);
   const lig = 62 + ((h >>> 16) % 18);
+  return `hsl(${hue} ${sat}% ${lig}%)`;
+}
+
+// Per-cluster colour, hashed from the cluster id (NOT its item) so two
+// clusters producing the same item are visually distinct — the point of the
+// layer is to tell same-item blocks apart. All rects of one cluster share it.
+function clusterColor(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  const sat = 58 + ((h >>> 8) % 24);   // 58..81
+  const lig = 52 + ((h >>> 16) % 16);  // 52..67
   return `hsl(${hue} ${sat}% ${lig}%)`;
 }
 
@@ -515,6 +543,11 @@ export type MapViewProps = {
   // directional arrows. Pass run.flow.beltSegments here. Cursor-driven
   // tb/tr visibility mirrors the entity layer.
   flowSegments?: FlowSegmentLite[];
+  // Optional cluster data (machine/furnace/miner/buffer blocks). When
+  // present, a toggleable layer draws each cluster's disjoint sub-rects
+  // in a per-cluster colour, highlighted together on hover. Pass
+  // run.flow.clusters. tb/tr lifetime mirrors the entity layer.
+  clusters?: FlowClusterLite[];
 };
 
 export function MapView({
@@ -528,6 +561,7 @@ export function MapView({
   onTick,
   focusBBox,
   flowSegments,
+  clusters,
 }: MapViewProps) {
   const [data, setData] = useState<MapData | null>(null);
   const [sprites, setSprites] = useState<SpriteAtlas | null>(null);
@@ -541,6 +575,7 @@ export function MapView({
   const [tooltip, setTooltip] = useState<
     | { kind: 'entity'; name: string; en: number; px: number; py: number; sx: number; sy: number }
     | { kind: 'flow'; id: string; sx: number; sy: number }
+    | { kind: 'cluster'; id: string; label: string; sub: string; sx: number; sy: number }
     | null
   >(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -564,6 +599,8 @@ export function MapView({
   // filter overlays — FBSR's "alt info" idea — so a single switch
   // strips them all without losing the per-overlay sub-controls.
   const [showFlow, setShowFlow] = useState(false);
+  const [showClusters, setShowClusters] = useState(false);
+  const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
   const [altMode, setAltMode] = useState(true);
   const [altRecipes, setAltRecipes] = useState(true);
   const [altSplitterArrows, setAltSplitterArrows] = useState(true);
@@ -970,6 +1007,16 @@ export function MapView({
         return;
       }
     }
+    // Cluster rects: hovering any rect highlights the whole cluster (all its
+    // disjoint sub-blocks) via hoveredClusterId, and shows a cluster tooltip.
+    const cg = t.closest('[data-cluster-id]');
+    if (cg) {
+      const id = cg.getAttribute('data-cluster-id') ?? '';
+      if (hoveredClusterId !== id) setHoveredClusterId(id);
+      setTooltip({ kind: 'cluster', id, label: cg.getAttribute('data-cluster-label') ?? id, sub: cg.getAttribute('data-cluster-sub') ?? '', sx, sy });
+      return;
+    }
+    if (hoveredClusterId !== null) setHoveredClusterId(null);
     if (!(t instanceof SVGUseElement)) { if (tooltip) setTooltip(null); return; }
     const name = t.getAttribute('data-name');
     const pxStr = t.getAttribute('data-px');
@@ -989,7 +1036,7 @@ export function MapView({
       sy,
     });
   };
-  const onMouseLeave = () => { if (tooltip) setTooltip(null); };
+  const onMouseLeave = () => { if (tooltip) setTooltip(null); if (hoveredClusterId !== null) setHoveredClusterId(null); };
   const resetView = () => {
     if (!data) return;
     const [x, y, w, h] = data.viewBox;
@@ -1293,6 +1340,54 @@ export function MapView({
     return out;
   }, [flowSegments, sprites, tick]);
 
+  // Cluster overlay — one translucent rect per disjoint sub-block, all rects
+  // of a cluster sharing its colour. Tick-filtered at both the cluster and the
+  // rect [tb,tr) level. Hovering any rect highlights the whole cluster.
+  const clusterNodes = useMemo(() => {
+    if (!clusters || clusters.length === 0) return null;
+    const out: ReactNode[] = [];
+    for (const c of clusters) {
+      if (tick < c.tb) continue;
+      if (c.tr !== undefined && tick >= c.tr) continue;
+      const color = clusterColor(c.id);
+      const hot = hoveredClusterId === c.id;
+      const rectEls: ReactNode[] = [];
+      for (let i = 0; i < c.rects.length; i++) {
+        const r = c.rects[i];
+        if (tick < r.tb) continue;
+        if (r.tr !== undefined && tick >= r.tr) continue;
+        rectEls.push(
+          <rect
+            key={i}
+            x={r.minX}
+            y={r.minY}
+            width={Math.max(r.maxX - r.minX + 1, 0.5)}
+            height={Math.max(r.maxY - r.minY + 1, 0.5)}
+            fill={color}
+            fillOpacity={hot ? 0.34 : 0.15}
+            stroke={color}
+            strokeWidth={hot ? 0.24 : 0.1}
+            strokeLinejoin="round"
+          />
+        );
+      }
+      if (rectEls.length === 0) continue;
+      const item = c.recipe ?? c.storedItem ?? '—';
+      const blocks = c.rects.length;
+      out.push(
+        <g
+          key={c.id}
+          data-cluster-id={c.id}
+          data-cluster-label={item}
+          data-cluster-sub={`${c.kind} · ${c.members?.length ?? 0} machines · ${blocks} block${blocks === 1 ? '' : 's'}`}
+        >
+          {rectEls}
+        </g>,
+      );
+    }
+    return out;
+  }, [clusters, tick, hoveredClusterId]);
+
   // Player marker — current interpolated position
   const playerPos = useMemo(() => {
     if (!data?.playerTrack) return null;
@@ -1362,6 +1457,14 @@ export function MapView({
                     active={showFlow}
                     onChange={setShowFlow}
                     hint="Belt-segment polylines with flow-direction arrows"
+                  />
+                )}
+                {clusters && clusters.length > 0 && (
+                  <LayerCheck
+                    label="Clusters"
+                    active={showClusters}
+                    onChange={setShowClusters}
+                    hint="Machine / furnace / miner / buffer blocks; disjoint pieces of one cluster share a colour"
                   />
                 )}
                 {(recipeMachines.length > 0 ||
@@ -1460,6 +1563,12 @@ export function MapView({
             </filter>
           </defs>
           <g ref={setEntitiesEl} id="run-map-entities">{uses}</g>
+          {/* Cluster overlay — translucent per-cluster-coloured rects, drawn
+              over the entity sprites as a backdrop tint (alt/flow info stays
+              readable on top). Rects catch pointer for hover-highlight +
+              tooltip; the whole layer hides via display when toggled off. */}
+          <g id="run-map-clusters"
+             style={{ display: showClusters ? '' : 'none' }}>{clusterNodes}</g>
           <g ref={setSplittersEl} id="run-map-splitters" pointerEvents="none"
              style={{ display: showSplitterArrows ? '' : 'none' }}>{splitterMarkerNodes}</g>
           <g ref={setInsertersEl} id="run-map-inserters" pointerEvents="none"
@@ -1497,6 +1606,12 @@ export function MapView({
           >
             {tooltip.kind === 'flow' ? (
               <div className="run-map-tooltip-name">segment {tooltip.id}</div>
+            ) : tooltip.kind === 'cluster' ? (
+              <>
+                <div className="run-map-tooltip-name">{tooltip.label}</div>
+                <div className="run-map-tooltip-coords">{tooltip.sub}</div>
+                <div className="run-map-tooltip-unit">{tooltip.id}</div>
+              </>
             ) : (
               <>
                 <div className="run-map-tooltip-name">{tooltip.name}</div>

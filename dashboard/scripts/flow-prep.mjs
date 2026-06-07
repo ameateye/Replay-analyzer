@@ -17,16 +17,19 @@
 //                   belt-edge-* stream and updateSegments advances the segment
 //                   timeline on every belt that moved between segments this tick.
 //
-// Output shape: { durationTick, summary, beltSegments, edges } as the `flow`
-// top-level field on the per-run JSON. `null` when inputs are missing.
+// Output shape: { durationTick, summary, clusters, beltSegments, edges } as the
+// `flow` top-level field on the per-run JSON. `null` when inputs are missing.
+// Clusters are derived at finalize from the settled partition (see clusters.mjs).
 
 import { existsSync } from 'node:fs';
 
 import { buildMergedEntities } from './lib/layout/merge-entities.mjs';
+import { heldItems } from './lib/buffer.mjs';
 import { createFlowState } from './lib/flow/state.mjs';
 import * as segments from './lib/flow/segments.mjs';
 import * as edges from './lib/flow/edges.mjs';
 import { attachContents } from './lib/flow/contents.mjs';
+import { buildClusters } from './lib/flow/clusters.mjs';
 
 // Floor a captured entity location to its tile origin. Inlined — the flow
 // pipeline doesn't otherwise depend on the geometry helpers.
@@ -84,11 +87,17 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
   const buffers = mergedStream.filter(m => m.category === 'buffer' && (m.timeBuilt ?? 0) <= durationTick);
   const bufferContents = attachContents(beltSegments, edgeList, durationTick, buffers);
 
-  const summary = _buildSummary(beltSegments, edgeList, bufferContents);
+  // Cluster pass: derive machine/furnace/miner/buffer clusters from the settled
+  // partition (edge ledger + segments). Registration reuses the same merged
+  // stream + prototype footprints the edge layer registers from.
+  const { clusters } = buildClusters({ edges: edgeList, beltSegments, merged: mergedStream, durationTick });
+
+  const summary = _buildSummary(beltSegments, edgeList, bufferContents, clusters);
 
   return {
     durationTick,
     summary,
+    clusters,
     beltSegments,
     edges: edgeList,
     buffers: bufferContents,
@@ -106,7 +115,7 @@ export function synthesiseEventsForRun(runDir, durationTick = Number.MAX_SAFE_IN
   return _synthesiseEvents(merged, durationTick);
 }
 
-function _buildSummary(beltSegments, edges, buffers = []) {
+function _buildSummary(beltSegments, edges, buffers = [], clusters = []) {
   const segmentsByKind = { belt: 0, splitter: 0 };
   for (const s of beltSegments) {
     const k = s.kind ?? 'belt';
@@ -120,7 +129,11 @@ function _buildSummary(beltSegments, edges, buffers = []) {
     edgesByKind[k] += 1;
     if (e.tr == null) liveEdges += 1;
   }
+  const clustersByKind = { machine: 0, furnace: 0, miner: 0, buffer: 0 };
+  for (const c of clusters) if (clustersByKind[c.kind] !== undefined) clustersByKind[c.kind] += 1;
   return {
+    clusterCount: clusters.length,
+    clustersByKind,
     beltSegmentCount: beltSegments.length,
     segmentsByKind,
     edgeCount: edges.length,
@@ -172,15 +185,19 @@ function _synthesiseEvents(merged, durationTick) {
         });
       }
     }
-    if (m.category === 'buffer' && m.content) {
-      evs.push({
-        type: 'buffer-content-changed',
-        tick: m.timeBuilt ?? 0,
-        unit: m.unitNumber,
-        category: m.category,
-        name: m.name,
-        storedItem: m.content,
-      });
+    if (m.category === 'buffer') {
+      // A chest/tank can hold several item types — emit one content event per
+      // held item (derived from the diff-compressed `contents` series object).
+      for (const item of heldItems(m)) {
+        evs.push({
+          type: 'buffer-content-changed',
+          tick: m.timeBuilt ?? 0,
+          unit: m.unitNumber,
+          category: m.category,
+          name: m.name,
+          storedItem: item,
+        });
+      }
     }
     if (m.timeRemoved !== undefined && m.timeRemoved <= durationTick) {
       evs.push({
@@ -352,7 +369,11 @@ function _baseFields(m) {
     out.resources = m.resources ?? null;
   }
   if (m.category === 'buffer') {
-    out.storedItem = m.content ?? null;
+    // A buffer can hold several item types. `storedItems` is the full list;
+    // `storedItem` is the first of those, kept for backward compatibility.
+    const items = heldItems(m);
+    out.storedItem = items[0] ?? null;
+    out.storedItems = items;
   }
   return out;
 }

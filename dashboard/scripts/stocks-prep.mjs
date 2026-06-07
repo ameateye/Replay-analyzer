@@ -37,9 +37,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { normalizeBufferFile, heldItems, seriesForItem } from './lib/buffer.mjs';
 
 export function buildStocks(runDir, rocketLaunchTick) {
-  const buf = JSON.parse(fs.readFileSync(path.join(runDir, 'bufferAmounts.json'), 'utf8'));
+  const buf = normalizeBufferFile(
+    JSON.parse(fs.readFileSync(path.join(runDir, 'bufferAmounts.json'), 'utf8')),
+  );
   const inv = JSON.parse(fs.readFileSync(path.join(runDir, 'playerInventory.json'), 'utf8'));
 
   const period = buf.period ?? 300;
@@ -52,13 +55,14 @@ export function buildStocks(runDir, rocketLaunchTick) {
   // --- Buffers: sample-and-hold across entities, aggregated per item ---
   const buffersByItem = new Map();
   for (const entity of buf.buffers ?? []) {
-    if (!entity.content) continue;
-    const arr = buffersByItem.get(entity.content) ?? [];
-    arr.push(entity);
-    buffersByItem.set(entity.content, arr);
+    for (const item of heldItems(entity)) {
+      const arr = buffersByItem.get(item) ?? [];
+      arr.push(entity);
+      buffersByItem.set(item, arr);
+    }
   }
   for (const [item, buffers] of buffersByItem) {
-    const sampleSeries = buffers.map(entity => (entity.amounts ?? []).slice().sort((a, b) => a[0] - b[0]));
+    const sampleSeries = buffers.map(entity => seriesForItem(entity, item).slice().sort((a, b) => a[0] - b[0]));
     const cursors = new Array(buffers.length).fill(0);
     const lastVal = new Array(buffers.length).fill(0);
     const ticks = [], counts = [];

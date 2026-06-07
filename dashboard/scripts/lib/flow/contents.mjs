@@ -16,10 +16,11 @@
 // splitter source's filter/priority routing in per state-window — and write
 // seg.contents + return the buffer ledger.
 //
-// A BUFFER is "what can come out of it": its available stock (closest-tick sample-
-// and-hold over `amounts`, item = its stored `content`) UNION its inputs (items an
-// inserter/drill drops in). The union catches a buffer that is flowing — filled and
-// emptied between samples, so stock reads ~0 yet an item is actively passing through.
+// A BUFFER is "what can come out of it": its available stock (sample-and-hold per
+// held item over that item's `contents` series — a chest/tank can hold several item
+// types, each seeded into the stock ledger) UNION its inputs (items an inserter/drill
+// drops in). The union catches a buffer that is flowing — filled and emptied between
+// samples, so stock reads ~0 yet an item is actively passing through.
 //
 // contents.{left,right}.items = [{ item, tb, tr? }] — one continuous presence
 // interval per entry (tr omitted ⇒ still present at run end). A buffer record carries
@@ -29,6 +30,8 @@
 // Convergence: the item universe is finite and every propagation only unions in
 // sub-intervals contained in an edge/segment/buffer lifetime, so the worklist
 // terminates even through belt↔buffer cycles.
+
+import { heldItems, seriesForItem } from '../buffer.mjs';
 
 // Persisted segments are id'd `S-<n>`; edge endpoint `segs` store the raw numeric
 // `<n>` (state.segOf values). Belt lanes + the transfer graph key on the numeric id;
@@ -45,19 +48,20 @@ export function attachContents(beltSegments, edges, durationTick, buffers = []) 
     lanes.set(nid, { left: new Map(), right: new Map() });
   }
 
-  // Buffer node per chest/tank: static `stock` (from samples) + accumulated `pool`
-  // (inputs). outputs = stock ∪ pool, computed on demand when a buffer feeds out.
-  const bufNodes = new Map();  // `B<unit>` → { unit, content, tb, tr, stock, pool }
+  // Buffer node per chest/tank: static `stock` (from per-item samples) + accumulated
+  // `pool` (inputs). outputs = stock ∪ pool, computed on demand when a buffer feeds
+  // out. `items` is every item type the buffer held (a chest/tank can hold several).
+  const bufNodes = new Map();  // `B<unit>` → { unit, items, tb, tr, stock, pool }
   for (const b of buffers) {
     const node = {
       unit: b.unitNumber,
-      content: b.content ?? null,
+      items: heldItems(b),
       tb: b.timeBuilt ?? 0,
       tr: b.timeRemoved != null ? b.timeRemoved : null,
       stock: new Map(),
       pool: new Map(),
     };
-    seedStock(node, b.amounts, durationTick);
+    for (const item of node.items) seedStock(node, item, seriesForItem(b, item), durationTick);
     bufNodes.set(bKey(b.unitNumber), node);
   }
 
@@ -102,14 +106,16 @@ function seedStatic(edges, lanes, bufNodes) {
   }
 }
 
-// Buffer stock from periodic samples (`amounts` = [[tick, value], …]). Sample-and-
-// hold forward (the established convention — see lib/buffer.mjs): a sample's value
-// holds until the next sample, so item `content` is "present" over [tick, next) when
-// value > 0. Clipped to the buffer's life and the run duration. A content-less buffer
-// (unknown stored item) contributes no stock — its pool may still carry edge inputs.
-function seedStock(node, amounts, durationTick) {
-  if (!node.content) return;
-  const samples = (amounts ?? [])
+// Buffer stock for one held `item` from its diff-compressed series (`series` =
+// [[tick, value], …]). Sample-and-hold forward (the established convention — see
+// lib/buffer.mjs): a sample's value holds until the next sample, so `item` is
+// "present" over [tick, next) when value > 0. Clipped to the buffer's life and the
+// run duration. Called once per held item, so a multi-item buffer seeds every item
+// it carried. A buffer with no held items contributes no stock — its pool may still
+// carry edge inputs.
+function seedStock(node, item, series, durationTick) {
+  if (!item) return;
+  const samples = (series ?? [])
     .filter((s) => Array.isArray(s) && s.length >= 2)
     .slice()
     .sort((a, b) => a[0] - b[0]);
@@ -119,7 +125,7 @@ function seedStock(node, amounts, durationTick) {
     const start = Math.max(samples[i][0], node.tb);
     const end   = i + 1 < samples.length ? samples[i + 1][0] : cap;
     const lo = start, hi = Math.min(end, cap);
-    if (hi > lo) insertInterval(node.stock, node.content, lo, hi);
+    if (hi > lo) insertInterval(node.stock, item, lo, hi);
   }
 }
 
@@ -263,7 +269,10 @@ function depositTransfer(lanes, bufNodes, segById, dstKey, t) {
 
 // ── buffer emit ──────────────────────────────────────────────────
 // One record per buffer: stock (sampled), inputs (edge deposits), outputs (the union
-// — what can leave). All three are the same {item, tb, tr?} interval-ledger shape.
+// — what can leave). All three are the same {item, tb, tr?} interval-ledger shape and
+// already carry every item type the buffer held (the ledgers are item-keyed). A buffer
+// can hold several item types: `storedItems` is the full list; `storedItem` is kept as
+// the first of those for backward compatibility (null when the buffer held nothing).
 function emitBuffers(buffers, bufNodes) {
   const out = [];
   for (const b of buffers) {
@@ -274,7 +283,8 @@ function emitBuffers(buffers, bufNodes) {
       name: b.name,
       tile: { x: Math.floor(b.location.x), y: Math.floor(b.location.y) },
       tb: node.tb,
-      storedItem: node.content ?? null,
+      storedItem: node.items[0] ?? null,
+      storedItems: node.items,
       stock:   { items: intervalsToArray(node.stock) },
       inputs:  { items: intervalsToArray(node.pool) },
       outputs: { items: intervalsToArray(mergeMaps(node.stock, node.pool)) },

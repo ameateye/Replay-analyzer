@@ -54,7 +54,9 @@ if (unit != null) {
   const mn = L.raw.miner.get(unit);
   for (const [t, st] of mn?.statuses ?? []) if (inWindow(t)) pts.push([t, 'mine', `status ${st}`]);
   const bf = L.raw.buffer.get(unit);
-  { let prev = null; for (const [t, a] of bf?.amounts ?? []) { if (a !== prev) { if (inWindow(t)) pts.push([t, 'buf', `amount ${a}`]); prev = a; } } }
+  for (const [item, series] of Object.entries(bf?.contents ?? {})) {
+    for (const [t, a] of series) if (inWindow(t)) pts.push([t, 'buf', `${item} ${a}`]); // contents series are already change-only
+  }
   for (const e of edgesForUnit(L, unit)) {
     if (inWindow(e.tb)) pts.push([e.tb, 'edge', `${e.id} born`]);
     if (e.tr != null && inWindow(e.tr)) pts.push([e.tr, 'edge', `${e.id} retire`]);

@@ -14,6 +14,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { buildFlow, synthesiseEventsForRun } from '../flow-prep.mjs';
 import { buildMergedEntities } from '../lib/layout/merge-entities.mjs';
+import { normalizeBufferFile, heldItems } from '../lib/buffer.mjs';
 import { createState, applyEvent, reconcile, finalize } from '../lib/flow/segments.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,7 +69,7 @@ export function loadLayers(run, dur) {
     layout: indexBy(readJson(path.join(dir, 'entityLayout.json'))?.entities),
     machine: indexBy(readJson(path.join(dir, 'machineProduction.json'))?.machines),
     miner: indexBy(readJson(path.join(dir, 'minerActivity.json'))?.miners),
-    buffer: indexBy(readJson(path.join(dir, 'bufferAmounts.json'))?.buffers),
+    buffer: indexBy(normalizeBufferFile(readJson(path.join(dir, 'bufferAmounts.json')))?.buffers),
   };
   const mergedArr = buildMergedEntities(dir, dur);
   const merged = indexBy(mergedArr);
@@ -168,7 +169,7 @@ export function dossierLine(L, unit) {
   if (LAYOUT_CATS.has(cat)) tags.push(`lay${L.raw.layout.has(unit) ? '✓' : '✗'}`);
   if (mp) tags.push(`mach:${[...new Set((mp.recipes ?? []).map(r => r.recipe))].join('>') || '—'}`);
   if (mn) tags.push(`mine:${(mn.resources ?? []).join(',') || '—'}`);
-  if (bf) tags.push(`buf:${bf.content ?? '—'}`);
+  if (bf) tags.push(`buf:${heldItems(bf).join('+') || '—'}`);
   const seg = segOfUnit(L, unit); if (seg) tags.push(`seg:${seg}`);
   const ne = edgesForUnit(L, unit).length; if (ne) tags.push(`edges:${ne}`);
   const div = divergences(L, unit);
@@ -186,13 +187,13 @@ export function dossierBlock(L, unit) {
     lines.push(s);
   }
   const m = L.merged.get(unit);
-  if (m) lines.push(`  merged    ${m.category}${m.recipes?.length ? ` recipes:${[...new Set(m.recipes.map(r => r.recipe))].join('>')}` : ''}${m.resources?.length ? ` mines:${m.resources.join(',')}` : ''}${m.content ? ` buf:${m.content}` : ''}${m.mutations?.length ? ` mut=${m.mutations.length}` : ''}`);
+  if (m) lines.push(`  merged    ${m.category}${m.recipes?.length ? ` recipes:${[...new Set(m.recipes.map(r => r.recipe))].join('>')}` : ''}${m.resources?.length ? ` mines:${m.resources.join(',')}` : ''}${m.contents && heldItems(m).length ? ` buf:${heldItems(m).join('+')}` : ''}${m.mutations?.length ? ` mut=${m.mutations.length}` : ''}`);
   const mp = L.raw.machine.get(unit);
   if (mp) for (const r of mp.recipes ?? []) lines.push(`  machineP  ${r.recipe} start=${r.timeStarted}${r.timeStopped != null ? ` stop=${r.timeStopped}(${r.stoppedReason ?? '?'})` : ''} samples=${r.production?.length ?? 0}`);
   const mn = L.raw.miner.get(unit);
   if (mn) lines.push(`  minerA    ${(mn.resources ?? []).join(',')} statuses=${(mn.statuses ?? []).length}`);
   const bf = L.raw.buffer.get(unit);
-  if (bf) lines.push(`  bufferA   ${bf.content ?? '?'} samples=${(bf.amounts ?? []).length}`);
+  if (bf) lines.push(`  bufferA   ${heldItems(bf).join('+') || '?'} samples=${Object.values(bf.contents ?? {}).reduce((n, s) => n + s.length, 0)}`);
   const seg = segOfUnit(L, unit);
   lines.push(`  segment   ${seg ?? '—'}`);
   lines.push(`  cluster   (pending: clusters.mjs not yet wired into buildFlow)`);

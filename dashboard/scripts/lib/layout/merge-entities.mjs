@@ -44,6 +44,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { normalizeBufferFile } from '../buffer.mjs';
 
 // LAYOUT_SCOPE — only these entity names participate in the merged stream
 // from entityLayout.json. Mirrors map-prep's prior scope, which mirrored the
@@ -211,8 +212,10 @@ export function buildMergedEntities(runDir, durationTick, { externalMiners } = {
     }
   }
 
-  // 5) Buffers (chests + tanks). content = storedItem semantically.
-  const ba = readJsonOrNull(resolve(runDir, 'bufferAmounts.json'));
+  // 5) Buffers (chests + tanks). contents = per-item diff-compressed series
+  //    { [item]: [[tick, amount], ...] }. normalizeBufferFile upgrades old
+  //    single-item { content, amounts } runs to this shape.
+  const ba = normalizeBufferFile(readJsonOrNull(resolve(runDir, 'bufferAmounts.json')));
   for (const b of ba?.buffers ?? []) {
     const rec = {
       category: 'buffer',
@@ -222,8 +225,7 @@ export function buildMergedEntities(runDir, durationTick, { externalMiners } = {
       direction: 0,
       timeBuilt: b.timeBuilt ?? 0,
       mutations: [],
-      content: b.content ?? null,
-      amounts: b.amounts ?? [],
+      contents: b.contents ?? {},
     };
     if (b.type !== undefined)        rec.bufferType  = b.type;
     if (b.timeRemoved !== undefined) rec.timeRemoved = b.timeRemoved;

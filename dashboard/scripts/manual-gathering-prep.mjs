@@ -9,10 +9,11 @@
 // wreck cache, picked-up entity returning fuel/input slot, etc.).
 //
 // Filter 2 — chest-amount-decrease verification (the buffer data, per
-// the user's request). For each item, look at all chests with detected
-// content == item and check whether they collectively lost amounts
-// inside a wide window around the snapshot. If yes, attribute up to the
-// chest decrease as a pickup and only count the residual as gathered.
+// the user's request). For each item, look at all chests that ever held
+// that item (heldItems check against the new `contents` shape) and check
+// whether they collectively lost amounts of that item inside a wide window
+// around the snapshot. If yes, attribute up to the chest decrease as a
+// pickup and only count the residual as gathered.
 //
 // Filter 3 — player-position proximity to pickup-source entities. Each
 // item has its own list:
@@ -28,9 +29,9 @@
 //          right-clicked the fuel slot back into inventory.
 //
 // Limitations:
-//  - Buffer-amount detection in the upstream collector needs ~5 samples
-//    (~25 s) to determine a chest's content. Pickups from very young
-//    chests can leak through.
+//  - Very young chests (built just before the pickup) may have no samples
+//    yet in the window, so their decrease won't be detected. Rare in the
+//    DS opening; the ~10 s window on each side covers most cases.
 //  - Manual mining done immediately adjacent to a placed pickup-source
 //    entity (e.g. mining a coal rock right next to a stone furnace
 //    cluster) is excluded as a likely pickup. Rare in practice — players
@@ -43,6 +44,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { RECIPES_GAME_DATA, emptyRecipeRow, tickToMin } from './lib/common.mjs';
+import { normalizeBufferFile, heldItems, seriesForItem } from './lib/buffer.mjs';
 
 // Items whose gathering is meaningful past the burner phase. Stone and
 // coal mining post-burner-phase is irrelevant to the run analysis (the
@@ -94,7 +96,7 @@ export function buildManualGathering(runDir, xMaxTick, phaseEndTick) {
 
   const inv = JSON.parse(fs.readFileSync(invPath, 'utf8'));
   const pos = JSON.parse(fs.readFileSync(posPath, 'utf8'));
-  const buf = readOptional(path.join(runDir, 'bufferAmounts.json'), { period: 0, buffers: [] });
+  const buf = normalizeBufferFile(readOptional(path.join(runDir, 'bufferAmounts.json'), { period: 0, buffers: [] }));
   const mine = readOptional(path.join(runDir, 'minerActivity.json'), { period: 0, miners: [] });
   const mp = readOptional(path.join(runDir, 'machineProduction.json'), { period: 0, machines: [] });
 
@@ -114,7 +116,7 @@ export function buildManualGathering(runDir, xMaxTick, phaseEndTick) {
   // probably a pickup, not gathering". Filtered once instead of every
   // tick so the per-snapshot check stays cheap.
   const itemChests = Object.fromEntries(
-    itemKeys.map(item => [item, buf.buffers.filter(b => b.type === 'chest' && b.content === item)]),
+    itemKeys.map(item => [item, buf.buffers.filter(b => b.type === 'chest' && heldItems(b).includes(item))]),
   );
   const pickupSources = Object.fromEntries(itemKeys.map(item => {
     const chests = itemChests[item];
@@ -185,6 +187,7 @@ export function buildManualGathering(runDir, xMaxTick, phaseEndTick) {
         // attribute up to that drop as pickup and only credit the residual.
         const chestDrop = chestDecreaseInWindow(
           itemChests[item],
+          item,
           tick - CHEST_DELTA_WINDOW_TICKS,
           tick + CHEST_DELTA_WINDOW_TICKS,
         );
@@ -256,19 +259,20 @@ function isNearAnyDuringWindow(entities, positions, posPeriod, t0, t1) {
   return false;
 }
 
-// Sum of amount drops across all tracked chests of this content inside
-// [t0, t1]. The chest's last sample at-or-before t0 is the "before"
-// snapshot; the last sample at-or-before t1 is the "after". A negative
-// difference means inserter-or-player pulled from the chest in this
-// window — we count both, conservatively over-attributing pickups when
-// an inserter was the actual drain. Acceptable: false negatives on
-// gathering are preferred over false positives.
-function chestDecreaseInWindow(chests, t0, t1) {
+// Sum of amount drops for `item` across all tracked chests inside [t0, t1].
+// The chest's last sample at-or-before t0 is the "before" snapshot; the last
+// sample at-or-before t1 is the "after". A negative difference means an
+// inserter or player pulled that item from the chest in this window — we count
+// both, conservatively over-attributing pickups when an inserter was the actual
+// drain. Acceptable: false negatives on gathering are preferred over false
+// positives. Uses seriesForItem so chests that held several items are probed
+// only for the item we care about (the new `contents` shape).
+function chestDecreaseInWindow(chests, item, t0, t1) {
   let total = 0;
   for (const c of chests) {
     if (c.timeBuilt > t1) continue;
     let amtBefore = 0, amtAfter = 0;
-    for (const [t, a] of c.amounts) {
+    for (const [t, a] of seriesForItem(c, item)) {
       if (t <= t0) amtBefore = a;
       if (t <= t1) amtAfter = a;
       else break;

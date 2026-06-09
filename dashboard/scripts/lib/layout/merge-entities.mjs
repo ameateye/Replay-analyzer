@@ -40,6 +40,23 @@
 //     This fold is what map-prep applies *on top of* the lossless stream so
 //     map.json's shape stays byte-identical to the pre-lift output.
 //
+// IN-MEMORY ONLY — do NOT serialize this stream as-is. What ships is the
+// *derived* product: foldForMap() → <run>.map.json, and flow-prep's compressed
+// clusters/segments/edges → <run>.json's `flow`. The lossless records carry
+// run-length per-sample arrays that dwarf those products; persisting the raw
+// stream would bloat committed size for no consumer.
+//
+// Trim candidates — carried today to honour the "lossless" contract, but read
+// by NO map/flow consumer (each is read straight from its source JSON by some
+// OTHER prep instead, so it could be dropped from this stream if that contract
+// is relaxed):
+//   - labPacks, labPeriod         (labs)    — lab-saturation-prep reads labContents.json
+//   - bufferType                  (buffers) — captured, never read downstream
+//   - recipes[*].production[] + craftingSpeed/productivityBonus (machines)
+//        map/flow read only { recipe, timeStarted } per recipe run; the heavy
+//        per-sample production series is consumed by production/smelting preps
+//        straight off machineProduction.json, never via this stream.
+//
 // Pure module — no file I/O outside the input JSON reads, no writes.
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -68,31 +85,12 @@ function readJsonOrNull(p) {
 }
 function readJson(p) { return JSON.parse(readFileSync(p, 'utf-8')); }
 
-// Lab timeRemoved heuristic — labContents doesn't currently record removal,
-// so a lab whose last periodic sample is well before the latest sample seen
-// across any lab was removed shortly after that last sample. Preserved
-// verbatim from the previous map-prep behaviour.
-function deriveLabRemovedTick(lab, maxSample, period) {
-  if (lab.timeRemoved !== undefined) return lab.timeRemoved;
-  const last = lab.packs[lab.packs.length - 1];
-  if (last && last[0] + period * 2 < maxSample) return last[0] + period;
-  return undefined;
-}
-
-// Machine timeRemoved heuristic — machineProduction doesn't always set
-// timeRemoved, but stoppedReason=mined|entity_died on the active recipe
-// signals removal. Mirrors the legacy fbsr-prep / map-prep behaviour.
-function deriveMachineRemovedTick(machine) {
-  if (machine.timeRemoved !== undefined) return machine.timeRemoved;
-  let tr;
-  for (const r of machine.recipes ?? []) {
-    if ((r.stoppedReason === 'mined' || r.stoppedReason === 'entity_died')
-        && r.timeStopped !== undefined) {
-      if (tr === undefined || r.timeStopped > tr) tr = r.timeStopped;
-    }
-  }
-  return tr;
-}
+// Lab and machine removal come straight from the collector's `timeRemoved`
+// (lab-contents / machine-production both set it on mine/death via the shared
+// EntityTracker removal hooks; schemaV2+). The earlier sample-gap /
+// stoppedReason heuristics that back-filled pre-schemaV2 extractions are gone —
+// every served run is re-extracted under the current schema, so they only ever
+// short-circuited to this same field.
 
 export function buildMergedEntities(runDir, durationTick, { externalMiners } = {}) {
   const merged = [];
@@ -181,19 +179,13 @@ export function buildMergedEntities(runDir, durationTick, { externalMiners } = {
       mutations: m.mutations ?? [],
       recipes: m.recipes ?? [],
     };
-    const tr = deriveMachineRemovedTick(m);
-    if (tr !== undefined) rec.timeRemoved = tr;
+    if (m.timeRemoved !== undefined) rec.timeRemoved = m.timeRemoved;
     merged.push(rec);
   }
 
   // 4) Labs.
   const labData = readJsonOrNull(resolve(runDir, 'labContents.json'));
   if (labData) {
-    let maxSample = 0;
-    for (const l of labData.labs) {
-      const last = l.packs[l.packs.length - 1];
-      if (last && last[0] > maxSample) maxSample = last[0];
-    }
     for (const l of labData.labs) {
       const rec = {
         category: 'lab',
@@ -206,8 +198,7 @@ export function buildMergedEntities(runDir, durationTick, { externalMiners } = {
         labPeriod: labData.period,
         labPacks: l.packs ?? [],
       };
-      const tr = deriveLabRemovedTick(l, maxSample, labData.period);
-      if (tr !== undefined) rec.timeRemoved = tr;
+      if (l.timeRemoved !== undefined) rec.timeRemoved = l.timeRemoved;
       merged.push(rec);
     }
   }

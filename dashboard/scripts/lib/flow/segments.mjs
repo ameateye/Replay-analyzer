@@ -417,6 +417,9 @@ function toRecord(s) {
     if (tr != null) e.tr = tr; else open++;
     tileLocations.push(e);
   }
+  // Emitted order is a contract: gates diff builds byte-for-byte, and s.tiles'
+  // Map-insertion order shifts with reconcile internals.
+  tileLocations.sort((a, b) => (a.tb - b.tb) || (a.x - b.x) || (a.y - b.y) || ((a.tr ?? Infinity) - (b.tr ?? Infinity)));
   const o = { id: `S-${s.id}`, kind: s.kind, tb: s.tb, tiles: open };
   if (s.tr != null) o.tr = s.tr;
   if (s.kind === 'splitter' && s.splitterStates) o.splitterStates = s.splitterStates;

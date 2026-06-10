@@ -11,6 +11,7 @@ declare module '*/flow-prep.mjs' {
 
 declare module '*/state.mjs' {
   export function createFlowState(): any;
+  export function registerEvent(state: any, ev: any): any;
 }
 
 declare module '*/segments.mjs' {
@@ -20,7 +21,7 @@ declare module '*/segments.mjs' {
 }
 
 declare module '*/edges.mjs' {
-  export function applyEvent(state: any, ev: any): void;
+  export function applyEvent(state: any, ev: any, delta?: any): void;
   export function advance(state: any, segChanges: { beltEdges: any[]; moved: Set<number> }, tick: number): void;
   export function liveEdgeKeys(state: any): Map<string, { from: number; to: number; side: string | null }>;
   export function rebuildLiveEdgeKeys(state: any): Map<string, { from: number; to: number; side: string | null }>;

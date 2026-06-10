@@ -10,10 +10,12 @@
 // edges are minted/retired wholesale by segments' belt-edge-* stream.
 //
 // There is no drain/feed "kind": an edge is from-entity → to-entity, and machine-
-// vs-belt is just the current interval's category. applyEvent only DISPATCHES;
-// register/mutate/unregister own their edge work. "What entity is at this tile" is
-// answered once, by state (findEntityInTile); segment and belt-lane `side` are
-// resolved through single helpers. Throughput and filters are deferred.
+// vs-belt is just the current interval's category. Node RECORDS (machines /
+// miners / inserters / buffers) are registered by state.registerEvent before
+// this applier sees the same event — applyEvent reads the post-fold record and
+// does only the edge work. "What entity is at this tile" is answered once, by
+// state (findEntityInTile); segment and belt-lane `side` are resolved through
+// single helpers. Throughput and filters are deferred.
 
 import { readFileSync } from 'node:fs';
 import { findEntityInTile, getSegmentFromUnit, tileKey } from './state.mjs';
@@ -22,11 +24,6 @@ import { findEntityInTile, getSegmentFromUnit, tileKey } from './state.mjs';
 const PROTO = JSON.parse(
   readFileSync(new URL('../../../../game-data/flow-prototypes.json', import.meta.url)),
 );
-const REACH      = PROTO.inserterReach;            // name → 1|2 (keys = inserter-name set)
-const INSERTERS  = new Set(Object.keys(REACH));
-const MACHINE_FP = PROTO.footprints.machine;       // name → footprint size
-const MINER_FP   = PROTO.footprints.miner;
-const BUFFER_FP  = PROTO.footprints.buffer;        // name → footprint size (chests / tanks)
 const RECIPE_OVERRIDE = PROTO.recipeOutputOverride;          // recipe → item (mismatched-name recipes)
 const FLUID_ONLY      = new Set(PROTO.fluidOnlyRecipes);     // recipes whose output is a fluid → no belt item
 
@@ -38,7 +35,6 @@ const floorTile  = (loc) => ({ x: Math.floor(loc.x), y: Math.floor(loc.y) });
 const tileCenter = (t) => ({ x: t.x + 0.5, y: t.y + 0.5 });        // the one +0.5 (1×1 entities centre here)
 const sameTile   = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y;
 const stepTile   = (t, dir, dist) => { const v = DV[dir] ?? { x: 0, y: 0 }; return { x: t.x + v.x * dist, y: t.y + v.y * dist }; };
-const minerDrop  = (loc, dir, fp) => { const v = DV[dir]; if (!v) return null; const r = fp / 2 + 0.5; return { x: Math.floor(loc.x + v.x * r), y: Math.floor(loc.y + v.y * r) }; };
 
 // Which side of a vector (dx,dy) relative to facing `dir`. Collinear → 'right'.
 function sideAlong(dir, dx, dy) {
@@ -75,133 +71,76 @@ function beltToBeltSide(state, feeder, consumer) {
 }
 
 // ── dispatch ──────────────────────────────────────────────────
-export function applyEvent(state, ev) {
+// `delta` is state.registerEvent's report of what the fold changed (pre-fold
+// values this applier can no longer see, e.g. a direction change).
+export function applyEvent(state, ev, delta) {
   switch (ev.type) {
     case 'entity-built':    return onBuilt(state, ev);
     case 'entity-removed':  return onRemoved(state, ev);
-    case 'entity-mutated':  return onMutated(state, ev);
+    case 'entity-mutated':  return onMutated(state, ev, delta);
     case 'entity-replaced': return onReplaced(state, ev);
-    case 'recipe-changed':  return onRecipeChanged(state, ev);
   }
-}
-
-// A machine's recipe is the item-source for any inserter draining it. Edges live
-// across recipe changes (they're topological), so the recipe is kept as a per-machine
-// TIMELINE — contents resolution later intersects it with each draining edge's
-// lifetime. Successive same-recipe events collapse; a real change closes the prior
-// interval and opens a new one.
-function onRecipeChanged(state, ev) {
-  const m = state.machines.get(ev.unit);
-  if (!m) return;
-  const last = m.recipes[m.recipes.length - 1];
-  if (last) {
-    if (last.recipe === ev.recipe) return;
-    if (last.tr == null) last.tr = ev.tick;
-  }
-  m.recipes.push({ recipe: ev.recipe, tb: ev.tick, tr: null });
 }
 
 function onBuilt(state, ev) {
-  if (ev.category === 'machine')  return registerMachine(state, ev);
-  if (ev.category === 'miner')    return registerMiner(state, ev);
-  if (ev.category === 'inserter') return registerInserter(state, ev);
-  if (ev.category === 'buffer')   return registerBuffer(state, ev);
-  if (ev.category === 'belt')     return openEndpointAt(state, floorTile(ev.location), ev.unit, 'belt', ev.tick);
+  if (ev.category === 'belt') return openEndpointAt(state, floorTile(ev.location), ev.unit, 'belt', ev.tick);
+  openNode(state, ev.category, ev.unit, ev.tick);
 }
 
 function onRemoved(state, ev) {
-  if (ev.category === 'belt')        return closeEndpointAt(state, floorTile(ev.location), ev.unit, ev.tick);
-  if (state.machines.has(ev.unit))   return unregisterMachine(state, ev.unit, ev.tick);
-  if (state.miners.has(ev.unit))     return unregisterMiner(state, ev.unit, ev.tick);
-  if (state.inserters.has(ev.unit))  return unregisterInserter(state, ev.unit, ev.tick);
-  if (state.buffers.has(ev.unit))    return unregisterBuffer(state, ev.unit, ev.tick);
+  if (ev.category === 'belt') return closeEndpointAt(state, floorTile(ev.location), ev.unit, ev.tick);
+  closeNode(state, ev.unit, ev.tick);
 }
 
-function onMutated(state, ev) {
+// A registered node landed: owners (inserter / miner) mint their one edge;
+// passive tile occupants (machine / buffer) open the unit interval on any owned
+// edge already anchored to their tiles (fills an endpoint waiting on the tile;
+// reopens edges on a replace). Unregistered prototypes have no record → no-op.
+function openNode(state, category, unit, tick) {
+  if (category === 'inserter' || category === 'miner') {
+    const r = (category === 'inserter' ? state.inserters : state.miners).get(unit);
+    if (r) mintOwnerEdge(state, r, tick);
+    return;
+  }
+  const r = category === 'machine' ? state.machines.get(unit)
+          : category === 'buffer'  ? state.buffers.get(unit) : null;
+  if (r) for (const t of r.tiles) openEndpointAt(state, t, unit, category, tick);
+}
+
+// A registered node left: owners retire their edge; passive occupants close
+// their tile intervals (the edge persists — the endpoint just goes empty).
+function closeNode(state, unit, tick) {
+  const owner = state.inserters.get(unit) ?? state.miners.get(unit);
+  if (owner) return retireEdge(state, owner.edgeId, tick);
+  const r = state.machines.get(unit) ?? state.buffers.get(unit);
+  if (r) for (const t of r.tiles) closeEndpointAt(state, t, unit, tick);
+}
+
+function onMutated(state, ev, delta) {
   if (ev.category === 'belt') {
     const b = state.belts.get(ev.unit);
     if (ev.direction !== undefined && b) refreshSidesAt(state, floorTile(b.location));
     return;
   }
-  if (state.inserters.has(ev.unit)) return mutateInserter(state, ev);
-  if (state.miners.has(ev.unit))    return mutateMiner(state, ev);
-}
-
-// A replace is same-tile, new unit. Endpoints (machine/belt) re-open in place;
-// owners (inserter/miner) are a fresh owner, so retire the old and register anew.
-function onReplaced(state, ev) {
-  if (ev.category === 'belt')     return openEndpointAt(state, floorTile(ev.location), ev.newUnit, 'belt', ev.tick);
-  if (ev.category === 'machine')  { unregisterMachine(state, ev.oldUnit, ev.tick); return registerMachine(state, { ...ev, unit: ev.newUnit }); }
-  if (ev.category === 'miner')    { unregisterMiner(state, ev.oldUnit, ev.tick);   return registerMiner(state, { ...ev, unit: ev.newUnit }); }
-  if (ev.category === 'inserter') { unregisterInserter(state, ev.oldUnit, ev.tick); return registerInserter(state, { ...ev, unit: ev.newUnit }); }
-  if (ev.category === 'buffer')   { unregisterBuffer(state, ev.oldUnit, ev.tick);   return registerBuffer(state, { ...ev, unit: ev.newUnit }); }
-}
-
-// ── owners (inserter / miner): mint + retire their own edge ───
-function registerInserter(state, ev) {
-  if (!INSERTERS.has(ev.name)) return;
-  const r = {
-    kind: 'inserter', unit: ev.unit, name: ev.name, location: ev.location, tile: floorTile(ev.location),
-    direction: ev.direction ?? 0, reach: REACH[ev.name] ?? 1, edgeId: null, tb: ev.tick,
-    // Filter spec narrows which of a drained machine's outputs actually rides the belt.
-    useFilters: !!ev.inserterUseFilters,
-    filterMode: ev.inserterFilterMode ?? null,
-    filters: Array.isArray(ev.inserterFilters) ? ev.inserterFilters.slice() : [],
-  };
-  state.inserters.set(ev.unit, r);
-  mintOwnerEdge(state, r, ev.tick);
-}
-
-function registerMiner(state, ev) {
-  const fp = MINER_FP[ev.name];
-  if (fp == null) return;
-  const { tiles } = footprint(ev.location, fp);
-  const r = {
-    kind: 'miner', unit: ev.unit, name: ev.name, location: ev.location, direction: ev.direction ?? 0,
-    footprint: fp, tiles, dropTile: minerDrop(ev.location, ev.direction ?? 0, fp), edgeId: null, tb: ev.tick,
-    resource: Array.isArray(ev.resources) ? (ev.resources[0] ?? null) : null,   // item this drill drops onto its belt
-  };
-  state.miners.set(ev.unit, r);
-  writeTiles(state, tiles, ev.unit, 'miner', ev.name);
-  mintOwnerEdge(state, r, ev.tick);
-}
-
-function mutateInserter(state, ev) {
-  const r = state.inserters.get(ev.unit);
+  // A rotation moves an owner's tiles → retire the old edge and mint a fresh
+  // one off the already-folded record (state recomputed direction / dropTile).
+  if (!delta?.directionChanged) return;
+  const r = state.inserters.get(ev.unit) ?? state.miners.get(ev.unit);
   if (!r) return;
-  if (ev.inserterUseFilters !== undefined) r.useFilters = !!ev.inserterUseFilters;
-  if (ev.inserterFilterMode !== undefined) r.filterMode = ev.inserterFilterMode;
-  if (Array.isArray(ev.inserterFilters))   r.filters = ev.inserterFilters.slice();
-  rotateOwner(state, r, ev);
-}
-
-function mutateMiner(state, ev) {
-  const r = state.miners.get(ev.unit);
-  if (r && ev.direction !== undefined && ev.direction !== r.direction) r.dropTile = minerDrop(r.location, ev.direction, r.footprint);
-  rotateOwner(state, r, ev);
-}
-
-// A rotation moves an owner's tiles → retire the old edge and mint a fresh one.
-function rotateOwner(state, r, ev) {
-  if (!r || ev.direction === undefined || ev.direction === r.direction) return;
-  r.direction = ev.direction;
   retireEdge(state, r.edgeId, ev.tick);
   mintOwnerEdge(state, r, ev.tick);
 }
 
-function unregisterInserter(state, unit, tick) {
-  const r = state.inserters.get(unit);
-  if (!r) return;
-  retireEdge(state, r.edgeId, tick);
-  state.inserters.delete(unit);
+// A replace is same-tile, new unit (state already folded both records).
+// Endpoints (machine/belt/buffer) re-open in place; owners (inserter/miner)
+// are a fresh owner, so the old edge retires and a new one mints.
+function onReplaced(state, ev) {
+  if (ev.category === 'belt') return openEndpointAt(state, floorTile(ev.location), ev.newUnit, 'belt', ev.tick);
+  closeNode(state, ev.oldUnit, ev.tick);
+  openNode(state, ev.category, ev.newUnit, ev.tick);
 }
 
-function unregisterMiner(state, unit, tick) {
-  const r = state.miners.get(unit);
-  if (!r) return;
-  retireEdge(state, r.edgeId, tick);
-  state.miners.delete(unit);
-}
+// ── owners (inserter / miner): mint + retire their own edge ───
 
 // Mint an owner's one edge, anchored to its endpoint tiles. An inserter spans
 // pickup→drop tiles; a miner goes from itself (no tile) to its drop tile. A target
@@ -222,46 +161,7 @@ function mintOwnerEdge(state, r, tick) {
   r.edgeId = mintEdge(state, { from, to, ...ownerField }, tick).id;
 }
 
-// ── endpoints (machine/belt): passive tile occupants ──────────
-function registerMachine(state, ev) {
-  const fp = MACHINE_FP[ev.name];
-  if (fp == null) return;
-  const { tiles } = footprint(ev.location, fp);
-  state.machines.set(ev.unit, { unit: ev.unit, name: ev.name, location: ev.location, footprint: fp, tiles, tb: ev.tick, recipes: [] });
-  writeTiles(state, tiles, ev.unit, 'machine', ev.name);
-  for (const t of tiles) openEndpointAt(state, t, ev.unit, 'machine', ev.tick);   // reopen edges if this is a replace
-}
-
-function unregisterMachine(state, unit, tick) {
-  const r = state.machines.get(unit);
-  if (!r) return;
-  clearTiles(state, r.tiles, unit);
-  for (const t of r.tiles) closeEndpointAt(state, t, unit, tick);                 // close the interval; the edge persists
-  state.machines.delete(unit);
-}
-
-// Buffers (chests / tanks) are passive tile occupants, like machines: an inserter
-// drains one onto a belt (or feeds it) the same way it drains a machine. They mint
-// no edges of their own — registering them just puts their footprint in the tile
-// index so an inserter's pickup/drop endpoint resolves to the buffer unit, and the
-// contents pass can route items in/out of it.
-function registerBuffer(state, ev) {
-  const fp = BUFFER_FP[ev.name];
-  if (fp == null) return;
-  const { tiles } = footprint(ev.location, fp);
-  state.buffers.set(ev.unit, { unit: ev.unit, name: ev.name, location: ev.location, footprint: fp, tiles, tb: ev.tick });
-  writeTiles(state, tiles, ev.unit, 'buffer', ev.name);
-  for (const t of tiles) openEndpointAt(state, t, ev.unit, 'buffer', ev.tick);   // fill any inserter endpoint already waiting on this tile
-}
-
-function unregisterBuffer(state, unit, tick) {
-  const r = state.buffers.get(unit);
-  if (!r) return;
-  clearTiles(state, r.tiles, unit);
-  for (const t of r.tiles) closeEndpointAt(state, t, unit, tick);
-  state.buffers.delete(unit);
-}
-
+// ── endpoints (machine/buffer/belt): passive tile occupants ───
 // An entity (`unit`, `category`) landed at `tile` → open the unit interval on every
 // owned edge anchored there, refreshing belt-lane side. The interval carries the
 // category, so an endpoint follows a tile that changes type.
@@ -339,11 +239,15 @@ function endpointAt(state, tile, tick) {
   return { tile, units };
 }
 
+// Build tick of the LIVE record only — a dead entity lingering in the tile
+// index (removed miners keep their tiles, see state.regRemoved) must fall back
+// to the mint tick, as when the live registries dropped removed records.
 function recTb(state, unit, category) {
   const reg = category === 'belt' ? state.belts
             : category === 'machine' ? state.machines
             : category === 'miner' ? state.miners : null;
-  return reg?.get(unit)?.tb ?? null;
+  const r = reg?.get(unit);
+  return r && r.tr == null ? r.tb : null;
 }
 
 const curEntry = (ep) => { const u = ep.units[ep.units.length - 1]; return u && u.tr == null ? u : null; };
@@ -463,27 +367,6 @@ function addTile(state, t, id) {
   s.add(id);
 }
 
-// ── footprint + tile index writes ─────────────────────────────
-function footprint(loc, size) {
-  const half = size / 2;
-  const minX = Math.floor(loc.x - half), maxX = Math.floor(loc.x + half - 1e-6);
-  const minY = Math.floor(loc.y - half), maxY = Math.floor(loc.y + half - 1e-6);
-  const tiles = [];
-  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) tiles.push({ x, y });
-  return { tiles };
-}
-
-function writeTiles(state, tiles, unit, category, name) {
-  for (const t of tiles) state.tileEntities.set(tileKey(t.x, t.y), { unit, category, name });
-}
-
-function clearTiles(state, tiles, unit) {
-  for (const t of tiles) {
-    const k = tileKey(t.x, t.y);
-    if (state.tileEntities.get(k)?.unit === unit) state.tileEntities.delete(k);
-  }
-}
-
 // ── from-scratch rebuild oracle (used by _diagnostics) ────────
 // liveEdgeKeys — the incremental ledger (current unit per endpoint).
 // rebuildLiveEdgeKeys — recomputed from the state snapshot alone. Diffing the two
@@ -513,6 +396,7 @@ export function liveEdgeKeys(state) {
 export function rebuildLiveEdgeKeys(state) {
   const out = new Map();
   for (const r of state.inserters.values()) {
+    if (r.tr != null) continue;                                  // full-history registry: live records only
     const pickup = stepTile(r.tile, r.direction, r.reach), drop = stepTile(r.tile, OPP[r.direction] ?? r.direction, r.reach);
     const from = findEntityInTile(state, pickup.x, pickup.y), to = findEntityInTile(state, drop.x, drop.y);
     if (!from || !to) continue;
@@ -521,6 +405,7 @@ export function rebuildLiveEdgeKeys(state) {
     out.set(`i${r.unit}`, { from: from.unit, to: to.unit, side });
   }
   for (const r of state.miners.values()) {
+    if (r.tr != null) continue;                                  // full-history registry: live records only
     const to = r.dropTile && findEntityInTile(state, r.dropTile.x, r.dropTile.y);
     if (!to) continue;
     const side = to.category === 'belt' ? resolveSide(state, to.unit, r.dropTile, r.location, 'miner') : null;
@@ -559,7 +444,7 @@ function resolveInserterEdge(state, e) {
   if (!dst) return;                                            // drop into a machine → feed
   e.dst = dst;
   if (e.from.units.some(u => u.category === 'machine')) return resolveDrainWindows(state, e);  // static source
-  const filter = filterSpec(state.inserters.get(e.inserterUnit));
+  const filter = filterSpec(liveRec(state.inserters, e.inserterUnit));
   if (filter) e.transferFilter = filter;
   if (e.from.units.some(u => u.category === 'belt')) { e.src = 'belt'; return; }   // dynamic: belt lanes
   const bu = bufferUnitOf(e.from);
@@ -570,7 +455,7 @@ function resolveInserterEdge(state, e) {
 // life (the edge retires with the miner, so the resource is constant). Same static
 // shape as a machine drain — `itemWindows` + `dst` (a belt lane or a buffer).
 function resolveMinerEdge(state, e) {
-  const res = state.miners.get(e.minerUnit)?.resource;
+  const res = liveRec(state.miners, e.minerUnit)?.resource;
   if (!res) return;
   const dst = targetOf(e.to);
   if (!dst) return;
@@ -622,11 +507,11 @@ function filterSpec(r) {
 // each occupying machine's recipe timeline on the edge lifetime, map recipe → output
 // item, narrow by the inserter's filter. `dst` (belt lane or buffer) is set by the caller.
 function resolveDrainWindows(state, e) {
-  const r = state.inserters.get(e.inserterUnit);
+  const r = liveRec(state.inserters, e.inserterUnit);
   const windows = [];
   for (const fu of e.from.units) {
     if (fu.category !== 'machine') continue;
-    const m = state.machines.get(fu.unit);
+    const m = liveRec(state.machines, fu.unit);
     if (!m) continue;
     const fTr = fu.tr ?? (e.tr ?? null);
     for (const rc of (m.recipes ?? [])) {
@@ -662,6 +547,15 @@ function passesFilter(item, r) {
 }
 
 const lastUnit = (ep) => ep.units[ep.units.length - 1]?.unit ?? null;
+
+// Node record iff still live. The registries are full-history (state keeps a
+// removed entity's record, `tr` stamped), but contents resolution mirrors the
+// old live-registry semantics: an entity removed before finalize contributes
+// nothing — a removed machine's drain windows, a removed miner's resource and a
+// removed inserter's filter are all dropped, exactly as when absence-from-the-
+// registry encoded "removed". (Arguably a data-loss quirk; fixing it is a
+// behavior change for a separate fork — the byte-identical gate preserves it.)
+const liveRec = (reg, unit) => { const r = reg.get(unit); return r && r.tr == null ? r : null; };
 
 // Half-open [tb, tr) intersection of N intervals; null tr ⇒ +∞. Returns [tb, tr] or null.
 function intersectIvs(...ivs) {

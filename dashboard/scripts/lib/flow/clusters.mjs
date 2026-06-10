@@ -24,12 +24,11 @@
 // change starts a new record/id); we do not stitch identity across epochs.
 //
 // Registration is shared, not duplicated: the clusterable-entity set (lifetime,
-// recipe/resource/storedItem, footprint) is read from the SAME lossless `merged`
-// stream the edge layer registers from, using the SAME game-data/flow-prototypes
-// footprints. (The live `state.machines/miners/buffers` registries drop removed
-// entities, so `merged` is the complete source for a lifetime model.)
+// recipe/resource/storedItem, footprint, bbox) is read from `state`'s
+// FULL-HISTORY node records — the same records the edge layer reads, registered
+// once by state.registerEvent (a removed entity's record stays, `tr` stamped).
 //
-// Identity (per docs/specs/flow_promotion.md §Cluster): same `kind`
+// Identity (per docs/architecture/flow_feature.md — clusters): same `kind`
 // (machine|furnace|miner|buffer) + same `recipe` (storedItem for buffers, mined
 // resource for miners) + FUNCTIONAL CONTIGUITY on BOTH axes — sharing at least
 // one input belt segment AND one output belt segment (an axis with no segments
@@ -41,15 +40,6 @@
 // `{ kind:'cluster', id:'C-n' }` for a direct inserter handoff between two
 // clusters. This is what lib/smelting/lanes.mjs reads.
 
-import { readFileSync } from 'node:fs';
-import { dominantItem } from '../buffer.mjs';
-
-const PROTO = JSON.parse(
-  readFileSync(new URL('../../../../game-data/flow-prototypes.json', import.meta.url)),
-);
-const MACHINE_FP = PROTO.footprints.machine;   // furnaces live here too (distinguished by name)
-const MINER_FP   = PROTO.footprints.miner;
-const BUFFER_FP  = PROTO.footprints.buffer;
 const FURNACE_NAMES = new Set(['stone-furnace', 'steel-furnace', 'electric-furnace']);
 
 // Persisted segments are `S-<n>`; edge-endpoint `segs` store the raw numeric n.
@@ -58,69 +48,53 @@ const numId = (id) => (typeof id === 'number' ? id : Number(String(id).replace(/
 // ── entry point ──────────────────────────────────────────────
 // edges        — finalized edge ledger (edges.finalize().edges)
 // beltSegments — finalized segment records (for the valid-segment-id set)
-// merged       — the lossless merged-entity stream (registration source)
+// state        — the flow state (full-history node records from registration)
 // durationTick — run end; entities/lifetimes/intervals clip to it
-export function buildClusters({ edges, beltSegments, merged, durationTick }) {
-  const ents = registerEntities(merged, durationTick);
+export function buildClusters({ edges, beltSegments, state, durationTick }) {
+  const ents = registerEntities(state, durationTick);
   const validSeg = new Set((beltSegments ?? []).map((s) => numId(s.id)));
   buildPortTimelines(edges ?? [], ents, validSeg, durationTick);
   const records = partitionOverTime(ents, durationTick);
   return { clusters: records };
 }
 
-// ── registration (shared footprints + merged stream) ─────────
+// ── registration (read from state's full-history node records) ─
 // Each entity carries its lifetime [tb, end) and a RECIPE TIMELINE — machines /
 // furnaces can re-key over time. Miner resource and buffer role-item don't
 // change, so they get a single covering interval.
-function registerEntities(merged, durationTick) {
+function registerEntities(state, durationTick) {
   const ents = new Map();
-  for (const m of merged ?? []) {
-    const cat = m.category;
-    if (cat !== 'machine' && cat !== 'miner' && cat !== 'buffer') continue;
-    const tb = m.timeBuilt ?? 0;
-    if (tb > durationTick) continue;
-    const fpTable = cat === 'miner' ? MINER_FP : cat === 'buffer' ? BUFFER_FP : MACHINE_FP;
-    const footprint = fpTable[m.name];
-    if (footprint == null) continue;                       // not a clusterable prototype
-
-    const kind = cat === 'buffer' ? 'buffer'
-               : cat === 'miner'  ? 'miner'
-               : FURNACE_NAMES.has(m.name) ? 'furnace' : 'machine';
-    const end = (m.timeRemoved != null && m.timeRemoved <= durationTick) ? m.timeRemoved : durationTick;
-    const removed = m.timeRemoved != null && m.timeRemoved <= durationTick;
-
-    const recipes =
-        kind === 'buffer' ? [{ recipe: dominantItem(m), tb, tr: end }]
-      : kind === 'miner'  ? [{ recipe: Array.isArray(m.resources) ? (m.resources[0] ?? null) : null, tb, tr: end }]
-      :                     recipeIntervals(m.recipes, tb, end);
-
-    ents.set(m.unitNumber, {
-      unit: m.unitNumber, name: m.name, kind,
-      location: m.location, footprint,
-      bbox: footprintBBox(m.location, footprint),
-      tb, end, removed, recipes,
+  const add = (r, kind, recipes) => {
+    ents.set(r.unit, {
+      unit: r.unit, name: r.name, kind,
+      location: r.location, footprint: r.footprint,
+      bbox: r.bbox,
+      tb: r.tb, end: r.tr ?? durationTick, removed: r.tr != null, recipes,
       inPorts: [],    // [{ seg, side, tb, tr }] — belt → entity over time
       outPorts: [],   // [{ seg, side, tb, tr }] — entity → belt over time
       handoffs: [],   // [{ unit, tb, tr }]      — entity → entity direct hand-off
     });
-  }
+  };
+  for (const r of state.machines.values())
+    add(r, FURNACE_NAMES.has(r.name) ? 'furnace' : 'machine', recipeIntervals(r.recipes, r.tb, r.tr ?? durationTick));
+  for (const r of state.miners.values())
+    add(r, 'miner', [{ recipe: r.resource ?? null, tb: r.tb, tr: r.tr ?? durationTick }]);
+  for (const r of state.buffers.values())
+    add(r, 'buffer', [{ recipe: r.storedItemDominant ?? null, tb: r.tb, tr: r.tr ?? durationTick }]);
   return ents;
 }
 
-// Split a machine's recipe history into covering [tb,tr) intervals. Each recipe
-// runs from when it started until the next one starts (or end of life). The
-// recipe active before the first recorded start is taken to be that first
-// recipe (machines log the recipe they're set to, not "empty").
-function recipeIntervals(recipes, tb, end) {
-  const rs = (recipes ?? [])
-    .map((r) => ({ recipe: r.recipe, t: r.timeStarted ?? r.startTick ?? tb }))
-    .filter((r) => r.recipe != null)
-    .sort((a, b) => a.t - b.t);
+// Split a machine's folded recipe timeline into covering [tb,tr) intervals.
+// Each recipe runs from when it started until the next one starts (or end of
+// life). The recipe active before the first recorded start is taken to be that
+// first recipe (machines log the recipe they're set to, not "empty").
+function recipeIntervals(timeline, tb, end) {
+  const rs = (timeline ?? []).filter((r) => r.recipe != null);
   if (!rs.length) return [{ recipe: null, tb, tr: end }];
   const out = [];
   for (let i = 0; i < rs.length; i++) {
-    const s = Math.max(rs[i].t, tb);
-    const e = i + 1 < rs.length ? Math.max(s, rs[i + 1].t) : end;
+    const s = Math.max(rs[i].tb, tb);
+    const e = i + 1 < rs.length ? Math.max(s, rs[i + 1].tb) : end;
     if (e > s) out.push({ recipe: rs[i].recipe, tb: s, tr: e });
   }
   if (!out.length) return [{ recipe: rs[0].recipe, tb, tr: end }];
@@ -131,16 +105,6 @@ function recipeIntervals(recipes, tb, end) {
 function recipeAt(ent, t) {
   for (const iv of ent.recipes) if (iv.tb <= t && t < iv.tr) return iv.recipe ?? null;
   return null;
-}
-
-function footprintBBox(loc, size) {
-  const half = size / 2;
-  return {
-    minX: Math.floor(loc.x - half),
-    minY: Math.floor(loc.y - half),
-    maxX: Math.floor(loc.x + half - 1e-6),
-    maxY: Math.floor(loc.y + half - 1e-6),
-  };
 }
 
 // ── port timelines (no snapshot collapse) ────────────────────

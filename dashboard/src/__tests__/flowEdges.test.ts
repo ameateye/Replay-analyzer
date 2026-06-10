@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeAll } from 'vitest';
 
 import { buildFlow, synthesiseEventsForRun } from '../../scripts/flow-prep.mjs';
-import { createFlowState } from '../../scripts/lib/flow/state.mjs';
+import { createFlowState, registerEvent } from '../../scripts/lib/flow/state.mjs';
 import * as segments from '../../scripts/lib/flow/segments.mjs';
 import * as edges from '../../scripts/lib/flow/edges.mjs';
 
@@ -50,9 +50,10 @@ function driveRun(runDir: string): any {
   for (const e of evs) {
     if (cur !== null && e.tick !== cur) settle(cur);
     cur = e.tick;
+    const delta = registerEvent(st, e);
     const d = segments.applyEvent(st, e);
     if (d) for (const u of d) dirty.add(u);
-    edges.applyEvent(st, e);
+    edges.applyEvent(st, e, delta);
   }
   if (cur !== null) settle(cur);
   return st;

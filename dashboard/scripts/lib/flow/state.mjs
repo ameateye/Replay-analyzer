@@ -1,16 +1,57 @@
-// Shared flow state container.
+// Shared flow state container + the single node registrar.
 //
-// One state object threaded through the flow pipeline. The belt-segment slice
-// is owned by segments.mjs; the edge slice (entity registries + tile index +
-// edge ledger) is owned by edges.mjs. Each module reads/writes only its own
-// slice — the container just unifies ownership so the orchestrator threads one
-// object, and so cross-tier lookups (edges reading the belt graph, or resolving
-// a belt unit's segment) need no ctx indirection. See docs/specs/flow_edges_core.md.
+// One state object threaded through the flow pipeline. This module owns
+// REGISTRATION for node entities (machines / miners / inserters / buffers):
+// registerEvent folds entity events into per-entity records and maintains the
+// tile→entity index. Records are FULL-HISTORY — a removed entity's record
+// stays, with `tr` stamped — so finalize-time derivations (clusters) read the
+// whole lifetime here instead of re-registering from the merged stream.
+// Registration is per-entity, event-local folding: this module never reads
+// another entity's record and never computes a relation. Derivations live
+// elsewhere: segments.mjs owns the belt slice (belt records still register
+// there — they move here in a later step), edges.mjs owns the edge ledger.
+// See docs/specs/flow_pipeline_structure.md.
 //
-// Kept self-contained (no lib/flow imports). `tileKey` is the one tile-key format
-// (`${x},${y}`); it's exported so the edge logger keys edgesByTile identically
-// instead of re-deriving its own.
+// Kept self-contained (no lib/flow imports). `tileKey` is the one tile-key
+// format (`${x},${y}`); it's exported so the edge logger keys edgesByTile
+// identically instead of re-deriving its own.
+import { readFileSync } from 'node:fs';
+
 export const tileKey = (x, y) => `${x},${y}`;
+
+// ── prototypes (loaded once from game-data) ───────────────────
+const PROTO = JSON.parse(
+  readFileSync(new URL('../../../../game-data/flow-prototypes.json', import.meta.url)),
+);
+const REACH      = PROTO.inserterReach;            // name → 1|2 (keys = inserter-name set)
+const INSERTERS  = new Set(Object.keys(REACH));
+const MACHINE_FP = PROTO.footprints.machine;       // name → footprint size
+const MINER_FP   = PROTO.footprints.miner;
+const BUFFER_FP  = PROTO.footprints.buffer;        // name → footprint size (chests / tanks)
+
+// ── registration geometry (cardinal dirs only; y points down) ─
+const DV = { 0: { x: 0, y: -1 }, 4: { x: 1, y: 0 }, 8: { x: 0, y: 1 }, 12: { x: -1, y: 0 } }; // N E S W
+const floorTile = (loc) => ({ x: Math.floor(loc.x), y: Math.floor(loc.y) });
+const minerDrop = (loc, dir, fp) => { const v = DV[dir]; if (!v) return null; const r = fp / 2 + 0.5; return { x: Math.floor(loc.x + v.x * r), y: Math.floor(loc.y + v.y * r) }; };
+
+function footprintTiles(loc, size) {
+  const half = size / 2;
+  const minX = Math.floor(loc.x - half), maxX = Math.floor(loc.x + half - 1e-6);
+  const minY = Math.floor(loc.y - half), maxY = Math.floor(loc.y + half - 1e-6);
+  const tiles = [];
+  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) tiles.push({ x, y });
+  return tiles;
+}
+
+function footprintBBox(loc, size) {
+  const half = size / 2;
+  return {
+    minX: Math.floor(loc.x - half),
+    minY: Math.floor(loc.y - half),
+    maxX: Math.floor(loc.x + half - 1e-6),
+    maxY: Math.floor(loc.y + half - 1e-6),
+  };
+}
 
 export function createFlowState() {
   return {
@@ -31,18 +72,22 @@ export function createFlowState() {
     // it feeds changes, so the diff stays local).
     beltEdges: new Map(),  // feederUnit → Set<consumerUnit> (live cross-segment outputs)
 
-    // ── edge slice (edges.mjs) ──
-    // Entity registries, keyed by unit. Belts live in `belts` above (segments
-    // owns them); machines/miners/buffers/inserters are the edge layer's.
-    machines:  new Map(),  // unit → { unit, name, location, footprint, tiles, tb }
-    miners:    new Map(),  // unit → { unit, name, location, direction, footprint, tiles, dropTile, edgeId, tb }
-    buffers:   new Map(),  // unit → { unit, name, location, footprint, tiles, tb }  (reserved; not logged yet)
-    inserters: new Map(),  // unit → { unit, name, location, tile, direction, reach, edgeId, tb }
+    // ── node registries (this module) ──
+    // FULL-HISTORY records, keyed by unit; `tr` stamped on removal, record kept.
+    // Loop-time consumers (edges.mjs) must check `tr == null` where they relied
+    // on the old live registry's absence-means-removed semantics.
+    machines:  new Map(),  // unit → { unit, name, location, footprint, tiles, bbox, tb, tr, recipes }
+    miners:    new Map(),  // unit → { kind, unit, name, location, direction, footprint, tiles, bbox, dropTile, edgeId, tb, tr, resource }
+    buffers:   new Map(),  // unit → { unit, name, location, footprint, tiles, bbox, tb, tr, storedItemDominant }
+    inserters: new Map(),  // unit → { kind, unit, name, location, tile, direction, reach, edgeId, tb, tr, useFilters, filterMode, filters }
     // Unified tile → entity index over ALL physical categories (belts, machines,
-    // miners, buffers). The edges logger writes every category here so a single
+    // miners, buffers). Registration writes every category here so a single
     // findEntityInTile resolves an inserter's pickup/drop without a per-category
-    // probe; segments stays tile-index-free.
+    // probe; segments stays tile-index-free. The index is LIVE-state (current
+    // occupant), not temporal.
     tileEntities: new Map(),  // tileKey → { unit, category, name }
+
+    // ── edge slice (edges.mjs) ──
     // Edge store + reverse indices. edgesBySegment drives the affected-only
     // segment-event update (never scan every segment).
     edges:      new Map(),  // edgeId → edge (live; tr set when retired)
@@ -56,6 +101,118 @@ export function createFlowState() {
     // stored, so there's no segment index either.
     edgesByTile: new Map(),  // tileKey → Set<edgeId>  (owned edges' endpoint tiles)
   };
+}
+
+// ── node registration (the per-event fold) ───────────────────
+// Folds one event into the node records + tile index. Runs BEFORE the
+// segments/edges appliers for the same event, so they read post-fold records;
+// the returned delta carries what they can no longer see (pre-fold values).
+// Belts are skipped — they still register in segments.mjs.
+export function registerEvent(state, ev) {
+  if (ev.category === 'belt') return;
+  switch (ev.type) {
+    case 'entity-built':    return regBuilt(state, ev, ev.unit);
+    case 'entity-removed':  return regRemoved(state, ev.unit, ev.tick);
+    case 'entity-replaced': regRemoved(state, ev.oldUnit, ev.tick); return regBuilt(state, ev, ev.newUnit);
+    case 'entity-mutated':  return regMutated(state, ev);
+    case 'recipe-changed':  return regRecipe(state, ev);
+  }
+}
+
+// Unknown prototypes (no footprint / reach entry) don't register at all —
+// downstream appliers see no record and skip the entity, as before.
+function regBuilt(state, ev, unit) {
+  const tick = ev.tick;
+  if (ev.category === 'machine') {
+    const fp = MACHINE_FP[ev.name];
+    if (fp == null) return;
+    const tiles = footprintTiles(ev.location, fp);
+    state.machines.set(unit, { unit, name: ev.name, location: ev.location, footprint: fp, tiles,
+                               bbox: footprintBBox(ev.location, fp), tb: tick, tr: null, recipes: [] });
+    writeTiles(state, tiles, unit, 'machine', ev.name);
+  } else if (ev.category === 'miner') {
+    const fp = MINER_FP[ev.name];
+    if (fp == null) return;
+    const tiles = footprintTiles(ev.location, fp);
+    state.miners.set(unit, { kind: 'miner', unit, name: ev.name, location: ev.location, direction: ev.direction ?? 0,
+                             footprint: fp, tiles, bbox: footprintBBox(ev.location, fp),
+                             dropTile: minerDrop(ev.location, ev.direction ?? 0, fp), edgeId: null, tb: tick, tr: null,
+                             resource: Array.isArray(ev.resources) ? (ev.resources[0] ?? null) : null });
+    writeTiles(state, tiles, unit, 'miner', ev.name);
+  } else if (ev.category === 'inserter') {
+    if (!INSERTERS.has(ev.name)) return;
+    state.inserters.set(unit, {
+      kind: 'inserter', unit, name: ev.name, location: ev.location, tile: floorTile(ev.location),
+      direction: ev.direction ?? 0, reach: REACH[ev.name] ?? 1, edgeId: null, tb: tick, tr: null,
+      // Filter spec narrows which of a drained machine's outputs actually rides the belt.
+      useFilters: !!ev.inserterUseFilters,
+      filterMode: ev.inserterFilterMode ?? null,
+      filters: Array.isArray(ev.inserterFilters) ? ev.inserterFilters.slice() : [],
+    });
+  } else if (ev.category === 'buffer') {
+    const fp = BUFFER_FP[ev.name];
+    if (fp == null) return;
+    const tiles = footprintTiles(ev.location, fp);
+    state.buffers.set(unit, { unit, name: ev.name, location: ev.location, footprint: fp, tiles,
+                              bbox: footprintBBox(ev.location, fp), tb: tick, tr: null,
+                              storedItemDominant: ev.storedItemDominant ?? null });
+    writeTiles(state, tiles, unit, 'buffer', ev.name);
+  }
+}
+
+function regRemoved(state, unit, tick) {
+  const r = state.machines.get(unit) ?? state.miners.get(unit) ?? state.inserters.get(unit) ?? state.buffers.get(unit);
+  if (!r || r.tr != null) return;
+  r.tr = tick;
+  // Tile-index clearing mirrors the pre-refactor live registries exactly:
+  // machines and buffers clear their tiles; MINERS DO NOT (a removed miner's
+  // tiles stay in the index until overwritten — long-standing behavior the
+  // byte-identical gate preserves); inserters were never indexed.
+  if (state.machines.has(unit) || state.buffers.has(unit)) clearTiles(state, r.tiles, unit);
+}
+
+// Fold mutate fields into the record. Returns the delta the edge applier needs:
+// it can no longer compare against the pre-fold direction, so the fold reports
+// whether the direction changed (a rotation retires + re-mints the owner edge).
+function regMutated(state, ev) {
+  const r = state.inserters.get(ev.unit) ?? state.miners.get(ev.unit);
+  if (!r) return;
+  if (r.kind === 'inserter') {
+    if (ev.inserterUseFilters !== undefined) r.useFilters = !!ev.inserterUseFilters;
+    if (ev.inserterFilterMode !== undefined) r.filterMode = ev.inserterFilterMode;
+    if (Array.isArray(ev.inserterFilters))   r.filters = ev.inserterFilters.slice();
+  }
+  if (ev.direction === undefined || ev.direction === r.direction) return;
+  r.direction = ev.direction;
+  if (r.kind === 'miner') r.dropTile = minerDrop(r.location, r.direction, r.footprint);
+  return { directionChanged: true };
+}
+
+// A machine's recipe is kept as a per-machine TIMELINE — edges live across
+// recipe changes (they're topological), and contents resolution later
+// intersects the timeline with each draining edge's lifetime. Successive
+// same-recipe events collapse; a real change closes the prior interval and
+// opens a new one. Dead machines don't fold (mirrors the live registry).
+function regRecipe(state, ev) {
+  const m = state.machines.get(ev.unit);
+  if (!m || m.tr != null) return;
+  const last = m.recipes[m.recipes.length - 1];
+  if (last) {
+    if (last.recipe === ev.recipe) return;
+    if (last.tr == null) last.tr = ev.tick;
+  }
+  m.recipes.push({ recipe: ev.recipe, tb: ev.tick, tr: null });
+}
+
+function writeTiles(state, tiles, unit, category, name) {
+  for (const t of tiles) state.tileEntities.set(tileKey(t.x, t.y), { unit, category, name });
+}
+
+function clearTiles(state, tiles, unit) {
+  for (const t of tiles) {
+    const k = tileKey(t.x, t.y);
+    if (state.tileEntities.get(k)?.unit === unit) state.tileEntities.delete(k);
+  }
 }
 
 // ── shared accessors ─────────────────────────────────────────

@@ -23,8 +23,8 @@
 import { existsSync } from 'node:fs';
 
 import { buildMergedEntities } from './lib/layout/merge-entities.mjs';
-import { heldItems } from './lib/buffer.mjs';
-import { createFlowState } from './lib/flow/state.mjs';
+import { heldItems, dominantItem } from './lib/buffer.mjs';
+import { createFlowState, registerEvent } from './lib/flow/state.mjs';
 import * as segments from './lib/flow/segments.mjs';
 import * as edges from './lib/flow/edges.mjs';
 import { attachContents } from './lib/flow/contents.mjs';
@@ -60,9 +60,12 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
   for (const ev of events) {
     if (curTick !== null && ev.tick !== curTick) settleTick(curTick);
     curTick = ev.tick;
+    // Registration first (per event — the appliers read the post-fold record;
+    // mid-tick tile-index reads are observable, so this cannot batch per tick).
+    const delta = registerEvent(state, ev);
     const d = segments.applyEvent(state, ev);
     if (d) for (const u of d) dirty.add(u);
-    edges.applyEvent(state, ev);
+    edges.applyEvent(state, ev, delta);
   }
   if (curTick !== null) settleTick(curTick);
 
@@ -78,9 +81,9 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
   const bufferContents = attachContents(beltSegments, edgeList, durationTick, buffers);
 
   // Cluster pass: derive machine/furnace/miner/buffer clusters from the settled
-  // partition (edge ledger + segments). Registration reuses the same merged
-  // stream + prototype footprints the edge layer registers from.
-  const { clusters } = buildClusters({ edges: edgeList, beltSegments, merged: mergedStream, durationTick });
+  // partition (edge ledger + segments). The clusterable-entity set is read from
+  // state's full-history node records — registered once, by state.registerEvent.
+  const { clusters } = buildClusters({ edges: edgeList, beltSegments, state, durationTick });
 
   const summary = _buildSummary(beltSegments, edgeList, bufferContents, clusters);
 
@@ -361,9 +364,12 @@ function _baseFields(m) {
   if (m.category === 'buffer') {
     // A buffer can hold several item types. `storedItems` is the full list;
     // `storedItem` is the first of those, kept for backward compatibility.
+    // `storedItemDominant` (the item the buffer mostly holds) rides the built
+    // event so registration stays event-local — clusters keys buffers by it.
     const items = heldItems(m);
     out.storedItem = items[0] ?? null;
     out.storedItems = items;
+    out.storedItemDominant = dominantItem(m) ?? null;
   }
   return out;
 }

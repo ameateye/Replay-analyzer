@@ -403,6 +403,23 @@ export function reconcile(state, dirty, tick) {
   return events;
 }
 
+// Per-tick settle, returned as one value (the seam edges.advance consumes —
+// the driver never inspects segment-event types). `beltEdges` preserves
+// reconcile's emission order; `moved` is the belts that may have changed
+// segment this tick: the directly-dirty belts (covers join-in-place, which
+// emits no event) plus the units carried by segment-created / -merged /
+// -split (merge-losers and split-peeled belts that aren't individually dirty).
+export function advance(state, dirty, tick) {
+  const moved = new Set(dirty);
+  const beltEdges = [];
+  for (const se of reconcile(state, dirty, tick)) {
+    if (se.type === 'belt-edge-added')        beltEdges.push({ op: 'added', feeder: se.feeder, consumer: se.consumer });
+    else if (se.type === 'belt-edge-removed') beltEdges.push({ op: 'removed', feeder: se.feeder, consumer: se.consumer });
+    else if (se.units) for (const u of se.units) moved.add(u);
+  }
+  return { beltEdges, moved };
+}
+
 // ── finalize ─────────────────────────────────────────────────
 export function finalize(state, _durationTick) {
   const all = [...state.segs.values(), ...state.retired].sort((a, b) => (a.tb - b.tb) || (a.id - b.id));
@@ -417,6 +434,9 @@ function toRecord(s) {
     if (tr != null) e.tr = tr; else open++;
     tileLocations.push(e);
   }
+  // Emitted order is a contract: gates diff builds byte-for-byte, and s.tiles'
+  // Map-insertion order shifts with reconcile internals.
+  tileLocations.sort((a, b) => (a.tb - b.tb) || (a.x - b.x) || (a.y - b.y) || ((a.tr ?? Infinity) - (b.tr ?? Infinity)));
   // Emitted order is a contract: gates diff builds byte-for-byte, and s.tiles'
   // Map-insertion order shifts with reconcile internals.
   tileLocations.sort((a, b) => (a.tb - b.tb) || (a.x - b.x) || (a.y - b.y) || ((a.tr ?? Infinity) - (b.tr ?? Infinity)));

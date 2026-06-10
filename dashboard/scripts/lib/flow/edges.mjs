@@ -298,7 +298,7 @@ function refreshSidesAt(state, tile) {
 // (the units carried by segment-created / -merged / -split), walk its tile to the
 // edges anchored there and advance every endpoint holding that belt to its now-current
 // segment. The one index this rides is edgesByTile; segments hands us the moved units.
-export function updateSegments(state, movedUnits, tick) {
+function updateSegments(state, movedUnits, tick) {
   for (const unit of movedUnits) {
     const b = state.belts.get(unit);
     if (!b) continue;
@@ -394,14 +394,26 @@ export function endpointSegment(state, ep) {
 }
 
 // ── belt↔belt edges (driven by segments' belt-edge stream) ────
-export function mintBeltEdge(state, feeder, consumer, tick) {
+
+// Consume a tick's segment changes (the value segments.advance returned):
+// ledger belt↔belt edges in emission order, then advance the segment timeline
+// on every endpoint anchored to a belt that moved between segments.
+export function advance(state, segChanges, tick) {
+  for (const ch of segChanges.beltEdges) {
+    if (ch.op === 'added') mintBeltEdge(state, ch.feeder, ch.consumer, tick);
+    else                   retireBeltEdge(state, ch.feeder, ch.consumer, tick);
+  }
+  updateSegments(state, segChanges.moved, tick);
+}
+
+function mintBeltEdge(state, feeder, consumer, tick) {
   const from = beltEndpoint(state, feeder, tick), to = beltEndpoint(state, consumer, tick);
   if (!from || !to) return;
   to.side = beltToBeltSide(state, feeder, consumer);
   mintEdge(state, { from, to }, tick);                  // no owner; tile-indexed for the segment walk only
 }
 
-export function retireBeltEdge(state, feeder, consumer, tick) {
+function retireBeltEdge(state, feeder, consumer, tick) {
   for (const e of state.edges.values())
     if (e.inserterUnit == null && e.minerUnit == null && e.tr == null && curUnit(e.from) === feeder && curUnit(e.to) === consumer) {
       retireEdge(state, e.id, tick);

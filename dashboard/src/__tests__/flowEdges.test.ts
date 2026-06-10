@@ -43,13 +43,8 @@ function driveRun(runDir: string): any {
   let cur: number | null = null;
   let dirty = new Set<number>();
   const settle = (tick: number) => {
-    const moved = new Set<number>(dirty);
-    for (const se of segments.reconcile(st, dirty, tick)) {
-      if (se.type === 'belt-edge-added') edges.mintBeltEdge(st, se.feeder, se.consumer, tick);
-      else if (se.type === 'belt-edge-removed') edges.retireBeltEdge(st, se.feeder, se.consumer, tick);
-      else if (se.units) for (const u of se.units) moved.add(u);
-    }
-    edges.updateSegments(st, moved, tick);
+    const segChanges = segments.advance(st, dirty, tick);
+    edges.advance(st, segChanges, tick);
     dirty = new Set();
   };
   for (const e of evs) {

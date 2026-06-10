@@ -7,15 +7,14 @@
 //
 //   segments.mjs  — connected belt-tile components (lifetime topology).
 //                   applyEvent returns a dirty set; the caller accumulates a
-//                   tick's dirty belt units then calls reconcile() ONCE per
-//                   tick on the settled graph, which returns the tick's
-//                   segment events (created / merged / split + belt-edge-*).
+//                   tick's dirty belt units, then segments.advance() settles
+//                   the tick ONCE on the settled graph and RETURNS the tick's
+//                   segment changes (belt-edge deltas + moved belts) as one value.
 //   edges.mjs     — durable, tile-anchored edges (inserter / miner / belt↔belt),
 //                   each endpoint a tile with unit + segment occupancy
-//                   timelines. applyEvent mints/retires/morphs edges; after
-//                   reconcile, mintBeltEdge / retireBeltEdge consume the
-//                   belt-edge-* stream and updateSegments advances the segment
-//                   timeline on every belt that moved between segments this tick.
+//                   timelines. applyEvent mints/retires/morphs edges;
+//                   edges.advance() consumes segments' returned changes —
+//                   the driver never inspects them.
 //
 // Output shape: { durationTick, summary, clusters, beltSegments, edges } as the
 // `flow` top-level field on the per-run JSON. `null` when inputs are missing.
@@ -46,35 +45,26 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
 
   const events = _synthesiseEvents(mergedStream, durationTick);
 
-  // Drive the fold. Per tick: apply every event (accumulating dirty belt units
-  // for segments, mutating edges in place), then settle the tick ONCE — segments
-  // reconcile, then the edge layer consumes the resulting events. Events are
-  // tick-sorted, so a tick's events are contiguous.
+  // Drive the fold. Per tick, in order: apply every event (accumulating dirty
+  // belt units for segments, mutating edges in place), then settle the tick
+  // ONCE — segments.advance returns the tick's segment changes as a value,
+  // edges.advance consumes it. Events are tick-sorted, so a tick's events are
+  // contiguous.
   let curTick = null;
   let dirty = new Set();
-  const settle = (tick) => {
-    // Belts that may have changed segment this tick: the directly-dirty belts
-    // (covers join-in-place, which emits no event) plus the units carried by
-    // segment-created / -merged / -split (merge-losers and split-peeled belts
-    // that aren't individually dirty). updateSegments walks these to their
-    // tiles and advances each anchored endpoint's segment timeline.
-    const moved = new Set(dirty);
-    for (const se of segments.reconcile(state, dirty, tick)) {
-      if (se.type === 'belt-edge-added')        edges.mintBeltEdge(state, se.feeder, se.consumer, tick);
-      else if (se.type === 'belt-edge-removed') edges.retireBeltEdge(state, se.feeder, se.consumer, tick);
-      else if (se.units) for (const u of se.units) moved.add(u);
-    }
-    edges.updateSegments(state, moved, tick);
+  const settleTick = (tick) => {
+    const segChanges = segments.advance(state, dirty, tick);
+    edges.advance(state, segChanges, tick);
     dirty = new Set();
   };
   for (const ev of events) {
-    if (curTick !== null && ev.tick !== curTick) settle(curTick);
+    if (curTick !== null && ev.tick !== curTick) settleTick(curTick);
     curTick = ev.tick;
     const d = segments.applyEvent(state, ev);
     if (d) for (const u of d) dirty.add(u);
     edges.applyEvent(state, ev);
   }
-  if (curTick !== null) settle(curTick);
+  if (curTick !== null) settleTick(curTick);
 
   const { beltSegments } = segments.finalize(state, durationTick);
   const { edges: edgeList } = edges.finalize(state);

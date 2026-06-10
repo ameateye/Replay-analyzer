@@ -16,13 +16,12 @@ declare module '*/state.mjs' {
 declare module '*/segments.mjs' {
   export function applyEvent(state: any, ev: any): Iterable<number> | undefined;
   export function reconcile(state: any, dirty: Set<number>, tick: number): any[];
+  export function advance(state: any, dirty: Set<number>, tick: number): { beltEdges: any[]; moved: Set<number> };
 }
 
 declare module '*/edges.mjs' {
   export function applyEvent(state: any, ev: any): void;
-  export function mintBeltEdge(state: any, feeder: number, consumer: number, tick: number): void;
-  export function retireBeltEdge(state: any, feeder: number, consumer: number, tick: number): void;
-  export function updateSegments(state: any, movedUnits: Iterable<number>, tick: number): void;
+  export function advance(state: any, segChanges: { beltEdges: any[]; moved: Set<number> }, tick: number): void;
   export function liveEdgeKeys(state: any): Map<string, { from: number; to: number; side: string | null }>;
   export function rebuildLiveEdgeKeys(state: any): Map<string, { from: number; to: number; side: string | null }>;
 }

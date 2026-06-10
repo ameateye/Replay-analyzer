@@ -6,10 +6,11 @@
 // and folds it through two pipeline modules sharing one state container:
 //
 //   segments.mjs  — connected belt-tile components (lifetime topology).
-//                   applyEvent returns a dirty set; the caller accumulates a
-//                   tick's dirty belt units, then segments.advance() settles
-//                   the tick ONCE on the settled graph and RETURNS the tick's
-//                   segment changes (belt-edge deltas + moved belts) as one value.
+//                   state.registerEvent returns each belt event's dirty mark;
+//                   the caller accumulates a tick's dirty belt units, then
+//                   segments.advance() settles the tick ONCE on the settled
+//                   graph and RETURNS the tick's segment changes (belt-edge
+//                   deltas + moved belts) as one value.
 //   edges.mjs     — durable, tile-anchored edges (inserter / miner / belt↔belt),
 //                   each endpoint a tile with unit + segment occupancy
 //                   timelines. applyEvent mints/retires/morphs edges;
@@ -60,11 +61,11 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
   for (const ev of events) {
     if (curTick !== null && ev.tick !== curTick) settleTick(curTick);
     curTick = ev.tick;
-    // Registration first (per event — the appliers read the post-fold record;
-    // mid-tick tile-index reads are observable, so this cannot batch per tick).
+    // Registration first (per event — the edges applier reads the post-fold
+    // record; mid-tick tile-index reads are observable, so this cannot batch
+    // per tick). A belt delta carries the dirty mark the settle consumes.
     const delta = registerEvent(state, ev);
-    const d = segments.applyEvent(state, ev);
-    if (d) for (const u of d) dirty.add(u);
+    if (delta?.dirty) for (const u of delta.dirty) dirty.add(u);
     edges.applyEvent(state, ev, delta);
   }
   if (curTick !== null) settleTick(curTick);

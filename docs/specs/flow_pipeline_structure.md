@@ -48,7 +48,10 @@ segments advance, and everything else — edges included — derives at finalize
 
 Belts register in `state` like everything else: they are multi-consumer (edges reads belt direction and
 records for lane-side computation, plus `segOf` for segment timelines), so the shared registrar is their home;
-`segments` keeps only the partition logic.
+`segments` keeps only the partition logic. **Belt records keep live-delete semantics for now** (removal
+deletes the record): every consumer reads absence as "gone" (`sameSegmentNeighbours`, reconcile's departure
+pass, `resolveBeltEdge`), and nothing consumes belt history before the edges→finalize step — full-history
+belt records land with step 4, which is what needs them.
 
 ```mermaid
 flowchart TD
@@ -147,7 +150,8 @@ Run after **every** step, before starting the next:
    be negative, with the edges→finalize step expected to deliver the bulk.)
 
    Progress: after step 0 — 2330; after step 1 — 2346; after step 2 — 2370 (`edges` 609→524, `clusters`
-   438→407, `state` 80→224; the moves cost their documentation). The negative trend is owed by steps 4–5.
+   438→407, `state` 80→224; the moves cost their documentation); after step 3 — 2362 (`segments` 449→333,
+   `state` 224→304, `flow-prep` 355→352 — first net decrease). The bulk is owed by steps 4–5.
 
 ## 7. Sequencing
 
@@ -165,8 +169,11 @@ Run after **every** step, before starting the next:
    `merged` (double-build gone). Buffers' `storedItemDominant` rides the built event. *Gate: byte-identical
    (one intermediate failure — dead miners linger in the tile index, fixed by the `recTb` live guard);
    23/23 tests.*
-3. **Belt registration → `state`**, `register` returning the belt deltas segments' dirty-mark needs (it reads
-   pre-mutation neighbor links). *Diff: identical.*
+3. ✅ **Belt registration → `state`** (2026-06-11). `registerEvent` folds belt events and returns
+   `{ dirty }` — the pre-fold dirty mark — so the driver's per-event sequence collapses to
+   register → edges-apply; `segments.applyEvent` is gone (the module keeps only classification + lifecycle).
+   Belt records stay live-delete (decision recorded in §3 — full-history belts arrive with step 4).
+   *Gate: byte-identical; 23/23 tests.*
 4. **`edges` → finalize.** Rewrite the ledger as a finalize-time temporal join over `state` records +
    segment timelines + a temporal tile index. Largest step; its internal design is specced when reached,
    under this contract. *Diff: identical.*

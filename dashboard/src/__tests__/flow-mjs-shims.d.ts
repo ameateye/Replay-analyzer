@@ -15,7 +15,6 @@ declare module '*/state.mjs' {
 }
 
 declare module '*/segments.mjs' {
-  export function applyEvent(state: any, ev: any): Iterable<number> | undefined;
   export function reconcile(state: any, dirty: Set<number>, tick: number): any[];
   export function advance(state: any, dirty: Set<number>, tick: number): { beltEdges: any[]; moved: Set<number> };
 }

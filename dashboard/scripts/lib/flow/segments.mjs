@@ -1,14 +1,13 @@
-// segments.mjs — edge-based belt-segment lifecycle (replaces segments-old.mjs).
+// segments.mjs — edge-based belt-segment lifecycle.
 //
-// Two responsibilities, cleanly split:
-//   1. Belt state + classification (applyEvent / sameSegmentNeighbours) — take an
-//      event, update `state.belts` (one map: unit → folded belt rec), return the
-//      dirty mark, and classify same-segment neighbours straight from the
-//      captured edges. No tile index, no reverse index, no plans.
-//   2. Segment lifecycle (reconcile / finalize) — maintain live segments over
-//      time. The CALLER owns ticks: apply a whole tick's events (accumulating
-//      their dirty units), then call reconcile() ONCE for that tick. This module
-//      never groups events itself.
+// Belt records REGISTER in state.mjs (registerEvent folds each belt event and
+// returns its dirty mark); this module owns what is DERIVED from them:
+//   1. Classification (sameSegmentNeighbours) — same-segment neighbours read
+//      straight from the captured edges. No tile index, no reverse index.
+//   2. Segment lifecycle (reconcile / advance / finalize) — maintain live
+//      segments over time. The CALLER owns ticks: accumulate a tick's dirty
+//      units (the belt deltas registration returned), then call advance()
+//      ONCE for that tick. This module never groups events itself.
 //
 // SAME-SEGMENT (edges alone, no geometry): two belts are same-segment iff joined
 // by a STRAIGHT (feeder and consumer face the same way) or a CORNER (perpendicular,
@@ -17,106 +16,13 @@
 // sideload split is just `consumer.beltInputs.size < 2`. UG pairs are read from
 // each belt's own `undergroundPair` (symmetric in the data → no reverse index).
 //
-// DIRTY MARK — the event's entity plus everything in its inputs and outputs,
-// before and after. (entity includes oldUnit on a replace.) No reverse scan.
-//
 // No geometry: same-segment is read straight off each belt's captured
 // beltInputs / beltOutputs / undergroundPair, so its classification imports
 // nothing from lib/flow/ (only the shared state container, see state.mjs). The
-// old geometric model is kept as segments-old.mjs.
+// former geometric model (and its classify.mjs / geometry.mjs helpers) has been
+// removed — this edge-based classification fully replaces it.
 
-import { createFlowState, setEntityTile, clearEntityTile } from './state.mjs';
-
-// 'belt' category tag. TODO(refactor): source entity-name constants from the
-// game-data payload rather than hardcoding — see docs/refactors/segments-edge-rewrite.md.
-const BELT_CATEGORY = 'belt';
-
-// State now lives in the shared flow-state container (state.mjs). Re-exported
-// so existing callers (the _diagnostics parity tools) keep working unchanged;
-// flow-prep imports createFlowState directly.
-export { createFlowState as createState };
-
-function toSet(v) {
-  if (Array.isArray(v)) return new Set(v);
-  if (v instanceof Set) return new Set(v);
-  return new Set();
-}
-
-// The folded rec, field-for-field identical to the frozen _addBelt, plus `tb`
-// (the belt's build tick) so the edge layer can denormalise each belt
-// endpoint's own lifetime onto its edges. tb lives here, not on the segment
-// tile entry, because it's the entity's identity — it survives segment churn.
-function addBelt(belts, e) {
-  belts.set(e.unit, {
-    unit: e.unit,
-    name: e.name,
-    beltType: e.beltType,
-    direction: e.direction ?? 0,
-    location: e.location,
-    tb: e.tick ?? null,
-    beltToGroundType: e.beltToGroundType ?? null,
-    undergroundPair: e.undergroundPair ?? null,
-    beltInputs: toSet(e.beltInputs),
-    beltOutputs: toSet(e.beltOutputs),
-    splitterFilter: e.splitterFilter ?? null,
-    splitterInputPriority: e.splitterInputPriority ?? null,
-    splitterOutputPriority: e.splitterOutputPriority ?? null,
-  });
-}
-
-// Dirty = entity + its inputs + its outputs, before and after. No reverse scan.
-function dirtyMark(belts, e) {
-  const d = new Set();
-  for (const u of [e.unit, e.oldUnit, e.newUnit]) {   // entity (old+new on replace)
-    if (u == null) continue;
-    d.add(u);
-    const b = belts.get(u);                   // before
-    if (b) {
-      for (const x of b.beltInputs)  d.add(x);
-      for (const x of b.beltOutputs) d.add(x);
-      if (b.undergroundPair) d.add(b.undergroundPair);
-    }
-  }
-  for (const x of toSet(e.beltInputs))  d.add(x);   // after
-  for (const x of toSet(e.beltOutputs)) d.add(x);
-  if (e.undergroundPair) d.add(e.undergroundPair);
-  return d;
-}
-
-// Apply one event: compute dirty (before mutating), then update belts. Pure
-// belt-state + dirty mark — NO segment lifecycle. The caller accumulates dirty
-// across a tick's events and calls reconcile() once per tick.
-export function applyEvent(state, e) {
-  if (e.category !== BELT_CATEGORY) return null;
-  const belts = state.belts;
-  const dirty = dirtyMark(belts, e);
-  switch (e.type) {
-    case 'entity-built':
-      addBelt(belts, e);
-      break;
-    case 'entity-removed':
-      belts.delete(e.unit);
-      break;
-    case 'entity-mutated': {
-      const b = belts.get(e.unit);
-      if (!b) return null;
-      if (e.direction        !== undefined) b.direction = e.direction;
-      if (e.beltToGroundType !== undefined) b.beltToGroundType = e.beltToGroundType;
-      if (e.undergroundPair  !== undefined) b.undergroundPair = e.undergroundPair;
-      if (e.beltInputs       !== undefined) b.beltInputs = toSet(e.beltInputs);
-      if (e.beltOutputs      !== undefined) b.beltOutputs = toSet(e.beltOutputs);
-      if (e.splitterFilter         !== undefined) b.splitterFilter = e.splitterFilter;
-      if (e.splitterInputPriority  !== undefined) b.splitterInputPriority = e.splitterInputPriority;
-      if (e.splitterOutputPriority !== undefined) b.splitterOutputPriority = e.splitterOutputPriority;
-      break;
-    }
-    case 'entity-replaced':
-      addBelt(belts, { ...e, unit: e.newUnit });
-      belts.delete(e.oldUnit);
-      break;
-  }
-  return dirty;
-}
+import { setEntityTile, clearEntityTile } from './state.mjs';
 
 // Same-segment neighbours of `unit`, derived purely from edges + attributes.
 // Symmetric by construction at a SETTLED graph: an edge feeder→consumer is judged

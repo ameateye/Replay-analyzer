@@ -1,16 +1,16 @@
-// Shared flow state container + the single node registrar.
+// Shared flow state container + the single registrar.
 //
 // One state object threaded through the flow pipeline. This module owns
-// REGISTRATION for node entities (machines / miners / inserters / buffers):
-// registerEvent folds entity events into per-entity records and maintains the
-// tile→entity index. Records are FULL-HISTORY — a removed entity's record
-// stays, with `tr` stamped — so finalize-time derivations (clusters) read the
-// whole lifetime here instead of re-registering from the merged stream.
-// Registration is per-entity, event-local folding: this module never reads
-// another entity's record and never computes a relation. Derivations live
-// elsewhere: segments.mjs owns the belt slice (belt records still register
-// there — they move here in a later step), edges.mjs owns the edge ledger.
-// See docs/specs/flow_pipeline_structure.md.
+// REGISTRATION for every entity category: registerEvent folds entity events
+// into per-entity records and maintains the tile→entity index. Node records
+// (machines / miners / inserters / buffers) are FULL-HISTORY — a removed
+// entity's record stays, with `tr` stamped — so finalize-time derivations
+// (clusters) read the whole lifetime here instead of re-registering from the
+// merged stream. Belt records keep live-delete semantics (see the belt
+// section). Registration is per-entity, event-local folding: this module
+// never reads another entity's record and never computes a relation.
+// Derivations live elsewhere: segments.mjs owns the belt partition, edges.mjs
+// owns the edge ledger. See docs/specs/flow_pipeline_structure.md.
 //
 // Kept self-contained (no lib/flow imports). `tileKey` is the one tile-key
 // format (`${x},${y}`); it's exported so the edge logger keys edgesByTile
@@ -55,8 +55,8 @@ function footprintBBox(loc, size) {
 
 export function createFlowState() {
   return {
-    // ── belt-segment slice (segments.mjs) ──
-    belts:   new Map(),   // unit → folded belt entity rec
+    // ── belt-segment slice (records fold here; partition in segments.mjs) ──
+    belts:   new Map(),   // unit → folded belt entity rec (live-delete, see regBelt)
     segOf:   new Map(),   // unit → live segment id
     segs:    new Map(),   // segment id → live segment record
     retired: [],          // segments closed by merge / split / death
@@ -103,13 +103,12 @@ export function createFlowState() {
   };
 }
 
-// ── node registration (the per-event fold) ───────────────────
-// Folds one event into the node records + tile index. Runs BEFORE the
-// segments/edges appliers for the same event, so they read post-fold records;
-// the returned delta carries what they can no longer see (pre-fold values).
-// Belts are skipped — they still register in segments.mjs.
+// ── registration (the per-event fold) ────────────────────────
+// Folds one event into the entity records + tile index. Runs BEFORE the
+// edges applier for the same event, so it reads post-fold records; the
+// returned delta carries what downstream can no longer see (pre-fold values).
 export function registerEvent(state, ev) {
-  if (ev.category === 'belt') return;
+  if (ev.category === 'belt') return regBelt(state, ev);
   switch (ev.type) {
     case 'entity-built':    return regBuilt(state, ev, ev.unit);
     case 'entity-removed':  return regRemoved(state, ev.unit, ev.tick);
@@ -202,6 +201,91 @@ function regRecipe(state, ev) {
     if (last.tr == null) last.tr = ev.tick;
   }
   m.recipes.push({ recipe: ev.recipe, tb: ev.tick, tr: null });
+}
+
+// ── belt registration ─────────────────────────────────────────
+// Belt records keep LIVE-DELETE semantics (removal deletes the record): the
+// partition and edge layers read absence as "gone" throughout
+// (sameSegmentNeighbours, reconcile's departure pass, resolveBeltEdge, …).
+// Full-history belt records are deferred to the edges→finalize step, which
+// is what needs them.
+//
+// The returned delta is segments' DIRTY MARK — the event's entity plus
+// everything in its inputs and outputs, BEFORE and after the fold. A removed
+// belt's pre-fold neighbour links are unreachable once the fold lands, which
+// is why registration reports them. No reverse scan.
+function regBelt(state, ev) {
+  const belts = state.belts;
+  const dirty = beltDirtyMark(belts, ev);
+  switch (ev.type) {
+    case 'entity-built':
+      addBelt(belts, ev);
+      break;
+    case 'entity-removed':
+      belts.delete(ev.unit);
+      break;
+    case 'entity-mutated': {
+      const b = belts.get(ev.unit);
+      if (!b) return;                 // no record → nothing folded, nothing dirty
+      if (ev.direction        !== undefined) b.direction = ev.direction;
+      if (ev.beltToGroundType !== undefined) b.beltToGroundType = ev.beltToGroundType;
+      if (ev.undergroundPair  !== undefined) b.undergroundPair = ev.undergroundPair;
+      if (ev.beltInputs       !== undefined) b.beltInputs = toSet(ev.beltInputs);
+      if (ev.beltOutputs      !== undefined) b.beltOutputs = toSet(ev.beltOutputs);
+      if (ev.splitterFilter         !== undefined) b.splitterFilter = ev.splitterFilter;
+      if (ev.splitterInputPriority  !== undefined) b.splitterInputPriority = ev.splitterInputPriority;
+      if (ev.splitterOutputPriority !== undefined) b.splitterOutputPriority = ev.splitterOutputPriority;
+      break;
+    }
+    case 'entity-replaced':
+      addBelt(belts, { ...ev, unit: ev.newUnit });
+      belts.delete(ev.oldUnit);
+      break;
+  }
+  return { dirty };
+}
+
+// The folded belt rec. `tb` lives here, not on the segment tile entry, because
+// it's the entity's identity — it survives segment churn.
+function addBelt(belts, e) {
+  belts.set(e.unit, {
+    unit: e.unit,
+    name: e.name,
+    beltType: e.beltType,
+    direction: e.direction ?? 0,
+    location: e.location,
+    tb: e.tick ?? null,
+    beltToGroundType: e.beltToGroundType ?? null,
+    undergroundPair: e.undergroundPair ?? null,
+    beltInputs: toSet(e.beltInputs),
+    beltOutputs: toSet(e.beltOutputs),
+    splitterFilter: e.splitterFilter ?? null,
+    splitterInputPriority: e.splitterInputPriority ?? null,
+    splitterOutputPriority: e.splitterOutputPriority ?? null,
+  });
+}
+
+function beltDirtyMark(belts, e) {
+  const d = new Set();
+  for (const u of [e.unit, e.oldUnit, e.newUnit]) {   // entity (old+new on replace)
+    if (u == null) continue;
+    d.add(u);
+    const b = belts.get(u);                   // before
+    if (b) {
+      for (const x of b.beltInputs)  d.add(x);
+      for (const x of b.beltOutputs) d.add(x);
+      if (b.undergroundPair) d.add(b.undergroundPair);
+    }
+  }
+  for (const x of toSet(e.beltInputs))  d.add(x);   // after
+  for (const x of toSet(e.beltOutputs)) d.add(x);
+  if (e.undergroundPair) d.add(e.undergroundPair);
+  return d;
+}
+
+function toSet(v) {
+  if (Array.isArray(v) || v instanceof Set) return new Set(v);
+  return new Set();
 }
 
 function writeTiles(state, tiles, unit, category, name) {

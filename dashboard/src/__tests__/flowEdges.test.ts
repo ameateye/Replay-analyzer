@@ -51,8 +51,7 @@ function driveRun(runDir: string): any {
     if (cur !== null && e.tick !== cur) settle(cur);
     cur = e.tick;
     const delta = registerEvent(st, e);
-    const d = segments.applyEvent(st, e);
-    if (d) for (const u of d) dirty.add(u);
+    if (delta?.dirty) for (const u of delta.dirty) dirty.add(u);
     edges.applyEvent(st, e, delta);
   }
   if (cur !== null) settle(cur);

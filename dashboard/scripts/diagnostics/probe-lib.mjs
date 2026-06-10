@@ -15,7 +15,8 @@ import { fileURLToPath } from 'url';
 import { buildFlow, synthesiseEventsForRun } from '../flow-prep.mjs';
 import { buildMergedEntities } from '../lib/layout/merge-entities.mjs';
 import { normalizeBufferFile, heldItems } from '../lib/buffer.mjs';
-import { createState, applyEvent, reconcile, finalize } from '../lib/flow/segments.mjs';
+import { createFlowState, registerEvent } from '../lib/flow/state.mjs';
+import { reconcile, finalize } from '../lib/flow/segments.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -81,12 +82,12 @@ export function loadLayers(run, dur) {
 
 // ── segment pipeline (exposes state.segOf / .belts / .segs / .retired) ──
 export function segStateFromEvents(events, dur) {
-  const st = createState();
+  const st = createFlowState();
   let dirty = new Set(), cur = null;
   for (const e of events) {
     if (cur !== null && e.tick !== cur) { reconcile(st, dirty, cur); dirty = new Set(); }
     cur = e.tick;
-    const d = applyEvent(st, e); if (d) for (const u of d) dirty.add(u);
+    const d = registerEvent(st, e); if (d?.dirty) for (const u of d.dirty) dirty.add(u);
   }
   if (cur !== null) reconcile(st, dirty, cur);
   finalize(st, dur);

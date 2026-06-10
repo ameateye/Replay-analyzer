@@ -15,12 +15,6 @@
 // are their own segment and count toward a consumer's input total. The corner-vs-
 // sideload split is just `consumer.beltInputs.size < 2`. UG pairs are read from
 // each belt's own `undergroundPair` (symmetric in the data → no reverse index).
-//
-// No geometry: same-segment is read straight off each belt's captured
-// beltInputs / beltOutputs / undergroundPair, so its classification imports
-// nothing from lib/flow/ (only the shared state container, see state.mjs). The
-// former geometric model (and its classify.mjs / geometry.mjs helpers) has been
-// removed — this edge-based classification fully replaces it.
 
 import { setEntityTile, clearEntityTile } from './state.mjs';
 
@@ -56,28 +50,6 @@ export function sameSegmentNeighbours(belts, unit) {
 // Perpendicular feed onto an underground belt is always a sideload, never a
 // corner — the UG's orientation is fixed (docs/factorio-knowledge/ug-sideload-rule.md).
 const isUg = (b) => b.beltType === 'underground-belt';
-
-// Flood-fill the same-segment relation over every belt currently in the map.
-// Returns an array of component Sets (the partition oracle — used to validate
-// the incrementally-maintained segments).
-export function components(belts) {
-  const seen = new Set();
-  const comps = [];
-  for (const seed of belts.keys()) {
-    if (seen.has(seed)) continue;
-    const comp = new Set();
-    const stack = [seed];
-    while (stack.length) {
-      const u = stack.pop();
-      if (seen.has(u)) continue;
-      seen.add(u);
-      comp.add(u);
-      for (const n of sameSegmentNeighbours(belts, u)) if (!seen.has(n)) stack.push(n);
-    }
-    comps.push(comp);
-  }
-  return comps;
-}
 
 // ── segment lifecycle ────────────────────────────────────────
 // reconcile(state, dirty, tick) maintains live segments off the edge oracle.
@@ -123,8 +95,8 @@ function join(state, seg, u, tick) {        // u enters seg → open its tile oc
     else tl.push({ seg: seg.id, tick, seq: ++state.seq });
     const xy = tilesFor(b);
     seg.tiles.set(u, { xy, tb: tick });
-    // Belt tiles join the shared tile index here so the finalize replay (and
-    // findEntityInTile) resolve belts (segments owns belt tiles).
+    // Belt tiles join the shared tile index here so the finalize replay
+    // resolves belts (segments owns belt tiles).
     for (const t of xy) setEntityTile(state, t.x, t.y, { unit: u, category: 'belt', name: b.name });
   }
 }
@@ -153,9 +125,8 @@ function appendSplitter(seg, b, tick) {
     tileRight: t.length >= 2 ? { x: t[1].x, y: t[1].y } : null });
 }
 
-// Components of `members` under the same-segment relation (directed flood — same
-// rule as components(), so a segment's partition always agrees with the oracle).
-// Valid because reconcile runs on a settled graph.
+// Components of `members` under the same-segment relation (directed flood —
+// valid because reconcile runs on a settled graph).
 function componentsWithin(belts, members) {
   const seen = new Set(), comps = [];
   for (const seed of members) {
@@ -229,21 +200,16 @@ function recut(state, segId, tick, events) {
 // ── belt edges (cross-segment connections) ───────────────────
 // A belt edge is a belt output feeder→consumer NOT classed same-segment — a
 // sideload, splitter boundary, or 2-input corner. On the SETTLED graph that's
-// `beltOutputs \ sameSegmentNeighbours`, read straight off the captured edges —
-// no geometry, no segOf bookkeeping. The feeder owns the edge; dirtyMark marks a
-// feeder dirty whenever a consumer it feeds changes, so every affected edge is
-// re-derived from its feeder side and the diff stays local. Because the test is
-// purely local (never reads segOf), the diff is correct at any point the unit is
-// visited — so it runs inline in reconcile's merge/departure passes (which
-// already visit every dirty unit), not as a separate trailing scan.
-// Per-feeder edge diff: re-derive u's cross-segment outputs (beltOutputs \
-// sameSegmentNeighbours) and diff against the set stored last tick, emitting
-// UNIT→UNIT belt-edge deltas. The test is pure-local (sameSegmentNeighbours
-// reads only u's + its neighbours' own attributes, never segOf), so the edge
-// SET is independent of merge/split ordering — which is why this can run inline
-// at each unit's merge/departure visit (below) with no separate trailing scan,
-// and why no segment id is attached: the edge is a unit pair, and segment
-// membership is resolved by whoever consumes the stream.
+// `beltOutputs \ sameSegmentNeighbours`, read straight off the captured edges.
+// The feeder owns the edge: re-derive u's cross-segment outputs, diff against
+// the set stored last tick, emit UNIT→UNIT belt-edge deltas (no segment id —
+// the consumer resolves membership itself). The test is pure-local
+// (sameSegmentNeighbours reads only u's + its neighbours' own attributes,
+// never segOf), so the edge set is independent of merge/split ordering — the
+// diff is correct at any point the unit is visited, and the belt-edge changes
+// of a dirty unit's CONSUMERS are owned by their feeders, which the dirty mark
+// also marked. That is why this runs inline at each dirty unit's
+// merge/departure visit in reconcile, with no separate trailing scan.
 function edgeDiffFeeder(state, u, tick, events) {
   const { belts, beltEdges } = state;
   const prev = beltEdges.get(u);                 // u's cross-segment outputs last tick
@@ -275,19 +241,11 @@ function edgeDiffFeeder(state, u, tick, events) {
 //   { type: 'segment-merged',  from, into, units[] } `units` (all of `from`) folded into `into`
 //   { type: 'segment-split',   from, to, units[] }  `units` peeled off `from` into `to`
 //   { type: 'segment-retired', segId }             segment emptied (death)
-// plus the UNIT→UNIT belt-connection deltas (edgeDiffFeeder, folded inline):
+// plus the UNIT→UNIT belt-connection deltas (edgeDiffFeeder, folded inline at
+// each dirty unit's departure/merge visit):
 //   { type: 'belt-edge-added',   feeder, consumer }
 //   { type: 'belt-edge-removed', feeder, consumer }
-// segId/from/into/to are the public `S-N` form; belt edges carry no segId — they
-// are a unit pair, and the consumer resolves segment membership itself.
-//
-// The belt-edge diff is folded into the two passes that already visit every
-// dirty unit — departed units in the departure pass, present units in the merge
-// pass — so there is NO separate trailing scan. This is sound because the edge
-// test is purely local (sameSegmentNeighbours never reads segOf): every edge
-// change is owned by a feeder whose attributes (or whose consumer's attributes)
-// changed, and dirtyMark marks both endpoints, so the merge/departure visits
-// cover every affected feeder. See edgeDiffFeeder.
+// segId/from/into/to are the public `S-N` form; belt edges carry no segId.
 export function reconcile(state, dirty, tick) {
   const { belts, segs, segOf } = state;
   const events = [];

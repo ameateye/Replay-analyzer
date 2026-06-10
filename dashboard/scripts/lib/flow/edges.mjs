@@ -25,7 +25,7 @@
 // QUIRK where reproduced.
 
 import { readFileSync } from 'node:fs';
-import { tileKey } from './state.mjs';
+import { tileKey, clip, DV, OPP, LEFT, floorTile, tileCenter, stepTile, minerDrop } from './util.mjs';
 
 // ── prototypes (loaded once from game-data) ───────────────────
 const PROTO = JSON.parse(
@@ -33,15 +33,6 @@ const PROTO = JSON.parse(
 );
 const RECIPE_OVERRIDE = PROTO.recipeOutputOverride;          // recipe → item (mismatched-name recipes)
 const FLUID_ONLY      = new Set(PROTO.fluidOnlyRecipes);     // recipes whose output is a fluid → no belt item
-
-// ── geometry (cardinal dirs only, 16-way; y points down) ──────
-const DV   = { 0: { x: 0, y: -1 }, 4: { x: 1, y: 0 }, 8: { x: 0, y: 1 }, 12: { x: -1, y: 0 } }; // N E S W
-const OPP  = { 0: 8, 4: 12, 8: 0, 12: 4 };
-const LEFT = { 0: 12, 4: 0, 8: 4, 12: 8 };
-const floorTile  = (loc) => ({ x: Math.floor(loc.x), y: Math.floor(loc.y) });
-const tileCenter = (t) => ({ x: t.x + 0.5, y: t.y + 0.5 });        // the one +0.5 (1×1 entities centre here)
-const stepTile   = (t, dir, dist) => { const v = DV[dir] ?? { x: 0, y: 0 }; return { x: t.x + v.x * dist, y: t.y + v.y * dist }; };
-const minerDrop  = (loc, dir, fp) => { const v = DV[dir]; if (!v) return null; const r = fp / 2 + 0.5; return { x: Math.floor(loc.x + v.x * r), y: Math.floor(loc.y + v.y * r) }; };
 
 // Which side of a vector (dx,dy) relative to facing `dir`. Collinear → 'right'.
 function sideAlong(dir, dx, dy) {
@@ -101,6 +92,17 @@ function occupantAt(state, tile, seq) {
 const EMPTY = [];
 const passiveAt = (state, tile) => state.passive.get(tileKey(tile.x, tile.y)) ?? EMPTY;
 
+// Endpoint segment-interval writes (shared by both endpoint builders): open a
+// new segment interval (closing the prior one unless it's the same segment) /
+// close the open one.
+const openSegW = (ep, seg, tick) => {
+  if (seg == null) return;
+  const last = ep.segs?.[ep.segs.length - 1];
+  if (last && last.tr == null) { if (last.seg === seg) return; last.tr = tick; }
+  (ep.segs ??= []).push({ seg, tb: tick, tr: null });
+};
+const closeSegW = (ep, tick) => { const l = ep.segs?.[ep.segs.length - 1]; if (l && l.tr == null) l.tr = tick; };
+
 // ── shells: which edges ever existed, in mint order ───────────
 function collectShells(state) {
   const shells = [];
@@ -151,14 +153,6 @@ function collectShells(state) {
 // boundary — what updateSegments used to apply at settle time.
 function replayEndpoint(state, shell, tile, mode) {
   const ep = { tile, units: [] };
-  const openSegW = (seg, tick) => {
-    if (seg == null) return;
-    const last = ep.segs?.[ep.segs.length - 1];
-    if (last && last.tr == null) { if (last.seg === seg) return; last.tr = tick; }
-    (ep.segs ??= []).push({ seg, tb: tick, tr: null });
-  };
-  const closeSegW = (tick) => { const l = ep.segs?.[ep.segs.length - 1]; if (l && l.tr == null) l.tr = tick; };
-
   let cur = null;                     // { unit, category, rec (belts), startSeq }
   const setCur = (unit, category, seq) =>
     (cur = { unit, category, rec: category === 'belt' ? state.beltHist.get(unit) : null, startSeq: seq });
@@ -167,7 +161,7 @@ function replayEndpoint(state, shell, tile, mode) {
     for (const me of cur.rec.segTl) {
       if (me.seq <= cur.startSeq) continue;
       if (me.seq >= uptoSeq) break;
-      openSegW(me.seg, me.tick);
+      openSegW(ep, me.seg, me.tick);
     }
   };
   const sideOf = (seq) => {           // sideForEndpoint: belt-belt edges have no owner → null
@@ -183,7 +177,7 @@ function replayEndpoint(state, shell, tile, mode) {
     setCur(occ.unit, occ.category, shell.seqB);
     if (occ.category === 'belt') {
       ep.side = sideOf(shell.seqB);
-      openSegW(cur.rec ? segMembershipAt(cur.rec, shell.seqB) : null, shell.tb);
+      openSegW(ep, cur.rec ? segMembershipAt(cur.rec, shell.seqB) : null, shell.tb);
     }
   }
 
@@ -201,14 +195,14 @@ function replayEndpoint(state, shell, tile, mode) {
       setCur(pe.unit, pe.category, pe.seq);
       if (pe.category === 'belt') {
         ep.side = sideOf(pe.seq);
-        openSegW(cur.rec ? segMembershipAt(cur.rec, pe.seq) : null, pe.tick);
+        openSegW(ep, cur.rec ? segMembershipAt(cur.rec, pe.seq) : null, pe.tick);
       } else ep.side = null;
     } else if (pe.op === 'c') {
       const last = ep.units[ep.units.length - 1];
       if (last && last.tr == null && last.unit === pe.unit) {
         flushSegs(pe.seq);
         last.tr = pe.tick;
-        closeSegW(pe.tick);
+        closeSegW(ep, pe.tick);
         cur = null;
       }
     } else if (cur && cur.category === 'belt') {  // 'r'
@@ -221,7 +215,7 @@ function replayEndpoint(state, shell, tile, mode) {
   if (shell.tr != null) {
     const last = ep.units[ep.units.length - 1];
     if (last && last.tr == null) last.tr = shell.tr;
-    closeSegW(shell.tr);
+    closeSegW(ep, shell.tr);
   }
   return ep;
 }
@@ -284,21 +278,15 @@ function buildBeltEdge(state, shell, id) {
 }
 
 function finishBeltEndpoint(state, shell, ep, rec) {
-  const openSegW = (seg, tick) => {
-    if (seg == null) return;
-    const last = ep.segs?.[ep.segs.length - 1];
-    if (last && last.tr == null) { if (last.seg === seg) return; last.tr = tick; }
-    (ep.segs ??= []).push({ seg, tb: tick, tr: null });
-  };
   // mint: openSeg with the belt's segment as of the mint seq
-  openSegW(segMembershipAt(rec, shell.seqB), shell.tb);
+  openSegW(ep, segMembershipAt(rec, shell.seqB), shell.tb);
   // membership overlay — but NOT entries from the retire settle itself: the
   // live updateSegments ran after the tick's belt-edge retires and skipped
   // retired edges
   for (const me of rec.segTl) {
     if (me.seq <= shell.seqB) continue;
     if (shell.seqR != null && (me.seq >= shell.seqR || me.tick === shell.tr)) break;
-    openSegW(me.seg, me.tick);
+    openSegW(ep, me.seg, me.tick);
   }
   // rotations at the endpoint tile during the edge's life null the side
   for (const pe of passiveAt(state, ep.tile)) {
@@ -421,7 +409,7 @@ function filterSpec(r) {
 // each occupying machine's recipe timeline on the edge lifetime, map recipe → output
 // item, narrow by the inserter's filter. `dst` (belt lane or buffer) is set by the caller.
 function resolveDrainWindows(state, e) {
-  const r = liveRec(state.inserters, e.inserterUnit);
+  const spec = filterSpec(liveRec(state.inserters, e.inserterUnit));
   const windows = [];
   for (const fu of e.from.units) {
     if (fu.category !== 'machine') continue;
@@ -430,8 +418,8 @@ function resolveDrainWindows(state, e) {
     const fTr = fu.tr ?? (e.tr ?? null);
     for (const rc of (m.recipes ?? [])) {
       const item = recipeOutputItem(rc.recipe);
-      if (item == null || !passesFilter(item, r)) continue;
-      const w = intersectIvs([e.tb, e.tr ?? null], [fu.tb, fTr], [rc.tb, rc.tr ?? null]);
+      if (item == null || !passesFilter(item, spec)) continue;
+      const w = clip([e.tb, e.tr ?? null], [fu.tb, fTr], [rc.tb, rc.tr ?? null]);
       if (w) windows.push({ item, tb: w[0], tr: w[1] });
     }
   }
@@ -450,13 +438,11 @@ function filterEntryToItem(f) {
   return null;
 }
 
-function passesFilter(item, r) {
-  if (!r || !r.useFilters || !r.filters?.length) return true;
-  const items = r.filters.map(filterEntryToItem).filter(Boolean);
-  if (items.length === 0) return true;
-  const mode = r.filterMode ?? 'whitelist';
-  if (mode === 'whitelist') return items.includes(item);
-  if (mode === 'blacklist') return !items.includes(item);
+// Apply a filterSpec (null passes everything; unknown modes pass everything).
+function passesFilter(item, spec) {
+  if (!spec) return true;
+  if (spec.mode === 'whitelist') return spec.items.includes(item);
+  if (spec.mode === 'blacklist') return !spec.items.includes(item);
   return true;
 }
 
@@ -470,15 +456,3 @@ const lastUnit = (ep) => ep.units[ep.units.length - 1]?.unit ?? null;
 // registry encoded "removed". (Arguably a data-loss quirk; fixing it is a
 // behavior change for a separate fork — the byte-identical gate preserves it.)
 const liveRec = (reg, unit) => { const r = reg.get(unit); return r && r.tr == null ? r : null; };
-
-// Half-open [tb, tr) intersection of N intervals; null tr ⇒ +∞. Returns [tb, tr] or null.
-function intersectIvs(...ivs) {
-  const INF = Number.POSITIVE_INFINITY;
-  let lo = -INF, hi = INF;
-  for (const [a, b] of ivs) {
-    if (a > lo) lo = a;
-    const B = b == null ? INF : b;
-    if (B < hi) hi = B;
-  }
-  return hi <= lo ? null : [lo, hi === INF ? null : hi];
-}

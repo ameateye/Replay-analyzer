@@ -17,12 +17,8 @@
 // another entity's record and never computes a relation. Derivations live
 // elsewhere: segments.mjs owns the belt partition, edges.mjs derives the edge
 // ledger at finalize. See docs/specs/flow_pipeline_structure.md.
-//
-// Kept self-contained (no lib/flow imports). `tileKey` is the one tile-key
-// format (`${x},${y}`), exported for consumers keying their own tile maps.
 import { readFileSync } from 'node:fs';
-
-export const tileKey = (x, y) => `${x},${y}`;
+import { tileKey, floorTile, minerDrop, footprintTiles, footprintBBox } from './util.mjs';
 
 // ── prototypes (loaded once from game-data) ───────────────────
 const PROTO = JSON.parse(
@@ -33,30 +29,6 @@ const INSERTERS  = new Set(Object.keys(REACH));
 const MACHINE_FP = PROTO.footprints.machine;       // name → footprint size
 const MINER_FP   = PROTO.footprints.miner;
 const BUFFER_FP  = PROTO.footprints.buffer;        // name → footprint size (chests / tanks)
-
-// ── registration geometry (cardinal dirs only; y points down) ─
-const DV = { 0: { x: 0, y: -1 }, 4: { x: 1, y: 0 }, 8: { x: 0, y: 1 }, 12: { x: -1, y: 0 } }; // N E S W
-const floorTile = (loc) => ({ x: Math.floor(loc.x), y: Math.floor(loc.y) });
-const minerDrop = (loc, dir, fp) => { const v = DV[dir]; if (!v) return null; const r = fp / 2 + 0.5; return { x: Math.floor(loc.x + v.x * r), y: Math.floor(loc.y + v.y * r) }; };
-
-function footprintTiles(loc, size) {
-  const half = size / 2;
-  const minX = Math.floor(loc.x - half), maxX = Math.floor(loc.x + half - 1e-6);
-  const minY = Math.floor(loc.y - half), maxY = Math.floor(loc.y + half - 1e-6);
-  const tiles = [];
-  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) tiles.push({ x, y });
-  return tiles;
-}
-
-function footprintBBox(loc, size) {
-  const half = size / 2;
-  return {
-    minX: Math.floor(loc.x - half),
-    minY: Math.floor(loc.y - half),
-    maxX: Math.floor(loc.x + half - 1e-6),
-    maxY: Math.floor(loc.y + half - 1e-6),
-  };
-}
 
 export function createFlowState() {
   return {
@@ -370,11 +342,4 @@ export function clearEntityTile(state, x, y, unit) {
   const log = state.tileEntities.get(tileKey(x, y));
   const last = log?.[log.length - 1];
   if (last && last.seqR == null && last.unit === unit) last.seqR = ++state.seq;
-}
-
-// Current occupant of a tile (belt / machine / miner / buffer), or null.
-export function findEntityInTile(state, x, y) {
-  const log = state.tileEntities.get(tileKey(x, y));
-  const last = log?.[log.length - 1];
-  return last && last.seqR == null ? last : null;
 }

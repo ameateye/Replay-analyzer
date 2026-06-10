@@ -40,10 +40,9 @@
 // `{ kind:'cluster', id:'C-n' }` for a direct inserter handoff between two
 // clusters. This is what lib/smelting/lanes.mjs reads.
 
-const FURNACE_NAMES = new Set(['stone-furnace', 'steel-furnace', 'electric-furnace']);
+import { numId } from './util.mjs';
 
-// Persisted segments are `S-<n>`; edge-endpoint `segs` store the raw numeric n.
-const numId = (id) => (typeof id === 'number' ? id : Number(String(id).replace(/^S-/, '')));
+const FURNACE_NAMES = new Set(['stone-furnace', 'steel-furnace', 'electric-furnace']);
 
 // ── entry point ──────────────────────────────────────────────
 // edges        — finalized edge ledger (edges.finalize().edges)

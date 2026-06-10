@@ -44,7 +44,7 @@ segments advance, and everything else — edges included — derives at finalize
 | `edges` | hand-off ledger (inserter / miner-drop / belt→belt) — destination: a **finalize-time temporal join** | `state` records + segment timelines |
 | `clusters` | node grouping (finalize) | `state` records + `edges` |
 | `contents` | item-on-belt / buffer ledgers (finalize) | `segments` + `edges` + `state` buffer records |
-| `flow-prep` | the driver: event synthesis + the loop + finalize | — |
+| `flow-prep` | the driver: the loop + finalize (event synthesis in `events`, shared helpers in `util`) | `events` |
 
 Belts register in `state` like everything else: they are multi-consumer (edges reads belt direction and
 records for lane-side computation, plus `segOf` for segment timelines), so the shared registrar is their home;
@@ -55,7 +55,7 @@ belt records land with step 4, which is what needs them.
 
 ```mermaid
 flowchart TD
-  EV["events (synthesised in flow-prep)"] --> ST["state — full-history registration<br/>entity records + temporal tile index<br/>per-entity, event-local folding only"]
+  EV["events (synthesised in lib/flow/events)"] --> ST["state — full-history registration<br/>entity records + temporal tile index<br/>per-entity, event-local folding only"]
   ST --> SEG["segments — belt partition + identity<br/>(the one sequential fold)"]
   ST --> EDG["edges — hand-offs"]
   ST --> CLU["clusters — node grouping"]
@@ -151,7 +151,9 @@ Run after **every** step, before starting the next:
    Progress: after step 0 — 2330; after step 1 — 2346; after step 2 — 2370 (`edges` 609→524, `clusters`
    438→407, `state` 80→224; the moves cost their documentation); after step 3 — 2362 (`segments` 449→333,
    `state` 224→304, `flow-prep` 355→352 — first net decrease); after step 4 — 2328 (`edges` 524→448,
-   `flow-prep` 352→340, `state` 304→354, `segments` 333→337). One line above baseline; step 5 owes the rest.
+   `flow-prep` 352→340, `state` 304→354, `segments` 333→337); after step 5 — **2260** (`flow-prep` 340→105,
+   `state` 354→324, `segments` 337→296, `edges` 448→424, `contents` 442→430, `clusters` 407→406, + new
+   `util` 43 + `events` 232). 67 below the 2026-06-10 baseline (2327) — gate 3 met.
 
 ## 7. Sequencing
 
@@ -182,12 +184,15 @@ Run after **every** step, before starting the next:
    away) that the live `updateSegments` — running once per settle with the final `segOf` — never saw; fixed
    by compacting `segTl` to one entry per tick, last join wins. *Gate: byte-identical; 22/22 tests (the
    live-vs-rebuilt oracle test retired with the oracle).*
-5. **Cleanup & condense** — the explicit size step; the refactor is not done while the count is up. Targets:
-   dedupe `numId` (×2), interval intersection (×3), and tile/footprint geometry (now split across `state`,
-   `edges`, `clusters`); move event synthesis out of `flow-prep` into its own module so the driver reads as
-   one screen; the live-vs-rebuilt edge oracle (`liveEdgeKeys`/`rebuildLiveEdgeKeys`) moves to diagnostics or
-   dies with step 4; strip transitional comments that only explain the pre-refactor shape.
-   *Diff: identical. Gate-3 target: total LOC strictly below the 2026-06-10 baseline (2327).*
+5. ✅ **Cleanup & condense** (2026-06-11). New leaf module `lib/flow/util.mjs` (tile/footprint geometry,
+   interval `clip`, `tileKey`, `numId`) dedupes what was split across `state`/`edges`/`contents`/`clusters`
+   (`numId` ×2, `clip`/`intersectIvs` ×2, `DV`/`floorTile`/`minerDrop` ×2 + flow-prep's `tileOf`); event
+   synthesis moved to `lib/flow/events.mjs` so `flow-prep` reads as one screen (105 lines); dead exports
+   deleted (`segments.components` — the partition oracle, retired with step 4 — and `state.findEntityInTile`);
+   `edges` deduped internally (`openSegW` shared by both endpoint builders, `passesFilter` expressed over
+   `filterSpec`); transitional comments stripped (the belt-edge diff rationale was stated three times in
+   `segments`). The `clusters` bbox helpers (`bboxGap`/`unionBBox`) stay local — single consumer, no dupe.
+   *Gate: byte-identical; 22/22 tests; total LOC 2260 < 2327 baseline.*
 
 ### Quirks discovered and preserved (candidates for a later behavior fork)
 

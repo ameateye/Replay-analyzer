@@ -32,12 +32,11 @@
 // terminates even through belt↔buffer cycles.
 
 import { heldItems, seriesForItem } from '../buffer.mjs';
+import { clip, numId } from './util.mjs';
 
-// Persisted segments are id'd `S-<n>`; edge endpoint `segs` store the raw numeric
-// `<n>` (state.segOf values). Belt lanes + the transfer graph key on the numeric id;
-// buffer nodes key on `B<unit>` (string) so the two node spaces never collide.
-const numId = (id) => (typeof id === 'number' ? id : Number(String(id).replace(/^S-/, '')));
-const bKey  = (unit) => `B${unit}`;
+// Belt lanes + the transfer graph key on the numeric segment id (numId); buffer
+// nodes key on `B<unit>` (string) so the two node spaces never collide.
+const bKey = (unit) => `B${unit}`;
 
 export function attachContents(beltSegments, edges, durationTick, buffers = []) {
   const segById = new Map();   // numeric id → persisted segment record
@@ -448,18 +447,6 @@ function intervalsToArray(laneMap) {
     }
   }
   return out;
-}
-
-// Half-open intersection of N intervals; null tr ⇒ +∞. Returns [tb, tr] or null.
-function clip(...ivs) {
-  const INF = Number.POSITIVE_INFINITY;
-  let lo = -INF, hi = INF;
-  for (const [a, b] of ivs) {
-    if (a > lo) lo = a;
-    const B = b == null ? INF : b;
-    if (B < hi) hi = B;
-  }
-  return hi <= lo ? null : [lo, hi === INF ? null : hi];
 }
 
 // Upper-bound intersection where null ⇒ +∞.

@@ -170,8 +170,12 @@ Run after **every** step, before starting the next:
 4. **`edges` → finalize.** Rewrite the ledger as a finalize-time temporal join over `state` records +
    segment timelines + a temporal tile index. Largest step; its internal design is specced when reached,
    under this contract. *Diff: identical.*
-5. **Helper extraction sweep** (`segId`, interval math, node geometry) — fold into the steps where natural,
-   sweep the remainder at the end. *Diff: identical.*
+5. **Cleanup & condense** — the explicit size step; the refactor is not done while the count is up. Targets:
+   dedupe `numId` (×2), interval intersection (×3), and tile/footprint geometry (now split across `state`,
+   `edges`, `clusters`); move event synthesis out of `flow-prep` into its own module so the driver reads as
+   one screen; the live-vs-rebuilt edge oracle (`liveEdgeKeys`/`rebuildLiveEdgeKeys`) moves to diagnostics or
+   dies with step 4; strip transitional comments that only explain the pre-refactor shape.
+   *Diff: identical. Gate-3 target: total LOC strictly below the 2026-06-10 baseline (2327).*
 
 ### Quirks discovered and preserved (candidates for a later behavior fork)
 

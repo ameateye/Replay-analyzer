@@ -2,19 +2,24 @@
 //
 // One state object threaded through the flow pipeline. This module owns
 // REGISTRATION for every entity category: registerEvent folds entity events
-// into per-entity records and maintains the tile→entity index. Node records
-// (machines / miners / inserters / buffers) are FULL-HISTORY — a removed
-// entity's record stays, with `tr` stamped — so finalize-time derivations
-// (clusters) read the whole lifetime here instead of re-registering from the
-// merged stream. Belt records keep live-delete semantics (see the belt
-// section). Registration is per-entity, event-local folding: this module
-// never reads another entity's record and never computes a relation.
-// Derivations live elsewhere: segments.mjs owns the belt partition, edges.mjs
-// owns the edge ledger. See docs/specs/flow_pipeline_structure.md.
+// into per-entity records and the per-tile histories. Records are
+// FULL-HISTORY — a removed entity's record stays, with `tr` stamped — so
+// finalize-time derivations (edges, clusters) read whole lifetimes here.
+// (`state.belts` is additionally kept as a live-delete VIEW of the belt
+// records for the partition — see the belt section.)
+//
+// Everything recorded carries `seq` — one monotone counter bumped per
+// recorded action. Ticks order the run; seqs order WITHIN a tick: mid-tick
+// state is observable (an edge minted at event k seeds from the tile state as
+// of event k), so the finalize replay needs sub-tick ordering.
+//
+// Registration is per-entity, event-local folding: this module never reads
+// another entity's record and never computes a relation. Derivations live
+// elsewhere: segments.mjs owns the belt partition, edges.mjs derives the edge
+// ledger at finalize. See docs/specs/flow_pipeline_structure.md.
 //
 // Kept self-contained (no lib/flow imports). `tileKey` is the one tile-key
-// format (`${x},${y}`); it's exported so the edge logger keys edgesByTile
-// identically instead of re-deriving its own.
+// format (`${x},${y}`), exported for consumers keying their own tile maps.
 import { readFileSync } from 'node:fs';
 
 export const tileKey = (x, y) => `${x},${y}`;
@@ -55,51 +60,47 @@ function footprintBBox(loc, size) {
 
 export function createFlowState() {
   return {
+    seq: 0,               // monotone action counter (sub-tick ordering; see header)
     // ── belt-segment slice (records fold here; partition in segments.mjs) ──
-    belts:   new Map(),   // unit → folded belt entity rec (live-delete, see regBelt)
-    segOf:   new Map(),   // unit → live segment id
-    segs:    new Map(),   // segment id → live segment record
-    retired: [],          // segments closed by merge / split / death
+    belts:    new Map(),  // unit → folded belt rec — LIVE view (delete on removal)
+    beltHist: new Map(),  // unit → the same rec objects, full-history (`tr` stamped)
+    segOf:    new Map(),  // unit → live segment id
+    segs:     new Map(),  // segment id → live segment record
+    retired:  [],         // segments closed by merge / split / death
     nextSeg: 0,
     // ── belt-edge slice (cross-segment belt connections) ──
     // A belt edge is a belt output feeder→consumer whose two endpoints sit in
     // DIFFERENT live segments — i.e. an output NOT in sameSegmentNeighbours.
     // segments.reconcile re-derives each dirty feeder's cross-segment outputs
-    // and emits belt-edge-added / belt-edge-removed; edges.mjs ledgers E-ids +
-    // lane side (enriched from belt locations) off that stream. Keyed by feeder
-    // because an edge is owned by its feeder's output; a dirty feeder recomputes
-    // only its own outputs (dirtyMark makes the feeder dirty whenever a consumer
-    // it feeds changes, so the diff stays local).
-    beltEdges: new Map(),  // feederUnit → Set<consumerUnit> (live cross-segment outputs)
+    // and emits belt-edge-added / belt-edge-removed deltas; `beltEdges` is the
+    // live diff baseline (keyed by feeder: an edge is owned by its feeder's
+    // output, and dirtyMark makes the feeder dirty whenever a consumer it feeds
+    // changes, so the diff stays local). `beltEdgeLog` is the seq-stamped delta
+    // history segments.advance appends — the finalize replay's mint/retire source.
+    beltEdges:   new Map(),  // feederUnit → Set<consumerUnit> (live cross-segment outputs)
+    beltEdgeLog: [],         // { op: 'add'|'rm', feeder, consumer, tick, seq }
 
     // ── node registries (this module) ──
-    // FULL-HISTORY records, keyed by unit; `tr` stamped on removal, record kept.
-    // Loop-time consumers (edges.mjs) must check `tr == null` where they relied
-    // on the old live registry's absence-means-removed semantics.
-    machines:  new Map(),  // unit → { unit, name, location, footprint, tiles, bbox, tb, tr, recipes }
-    miners:    new Map(),  // unit → { kind, unit, name, location, direction, footprint, tiles, bbox, dropTile, edgeId, tb, tr, resource }
-    buffers:   new Map(),  // unit → { unit, name, location, footprint, tiles, bbox, tb, tr, storedItemDominant }
-    inserters: new Map(),  // unit → { kind, unit, name, location, tile, direction, reach, edgeId, tb, tr, useFilters, filterMode, filters }
-    // Unified tile → entity index over ALL physical categories (belts, machines,
-    // miners, buffers). Registration writes every category here so a single
-    // findEntityInTile resolves an inserter's pickup/drop without a per-category
-    // probe; segments stays tile-index-free. The index is LIVE-state (current
-    // occupant), not temporal.
-    tileEntities: new Map(),  // tileKey → { unit, category, name }
+    // FULL-HISTORY records, keyed by unit; `tr`/`trSeq` stamped on removal,
+    // record kept. Owners (inserters / miners) carry a direction timeline
+    // `dirs` — each direction interval is one edge shell at finalize.
+    machines:  new Map(),  // unit → { unit, name, location, footprint, tiles, bbox, tb, tr, trSeq, recipes }
+    miners:    new Map(),  // unit → { kind, unit, name, location, direction, dirs, footprint, tiles, bbox, dropTile, tb, tr, trSeq, resource }
+    buffers:   new Map(),  // unit → { unit, name, location, footprint, tiles, bbox, tb, tr, trSeq, storedItemDominant }
+    inserters: new Map(),  // unit → { kind, unit, name, location, tile, direction, dirs, reach, tb, tr, trSeq, useFilters, filterMode, filters }
 
-    // ── edge slice (edges.mjs) ──
-    // Edge store + reverse indices. edgesBySegment drives the affected-only
-    // segment-event update (never scan every segment).
-    edges:      new Map(),  // edgeId → edge (live; tr set when retired)
-    nextEdgeId: 0,
-    // The ONLY edge index. An edge is identified by its (fromTile → toTile); a
-    // machine/belt appearing or leaving a tile looks up the OWNED edges anchored
-    // there and opens/closes the endpoint's unit interval in place (a quick-replace
-    // gives a new unit but the same edge). Owner→edge is 1:1, so the inserter/miner
-    // rec carries its own edgeId — no owner index. Belt-belt edges are stream-managed
-    // and not tile-indexed. Segment is resolved on demand (getSegmentFromUnit), not
-    // stored, so there's no segment index either.
-    edgesByTile: new Map(),  // tileKey → Set<edgeId>  (owned edges' endpoint tiles)
+    // ── per-tile histories (the finalize replay's ground truth) ──
+    // tileEntities: occupancy INTERVALS per tile, written by exactly the old
+    // live-index call sites (node registration here; belt join/leave in
+    // segments). Current occupant = last open interval; the replay seeds an
+    // endpoint from the interval containing the mint seq.
+    tileEntities: new Map(),  // tileKey → [{ unit, category, name, tb, seqB, tr?, seqR? }]
+    // passive: the moments where the live edge logger morphed endpoints in
+    // place — machines+buffers open/close their footprint tiles at build /
+    // remove; belts open ('o') at build/replace, close ('c') at remove, and
+    // log rotations ('r') at floorTile(location). Miners never log: they were
+    // owner-only (their lingering-tile seed behavior rides tileEntities).
+    passive: new Map(),  // tileKey → [{ op: 'o'|'c'|'r', unit, category?, tick, seq }]
   };
 }
 
@@ -119,7 +120,10 @@ export function registerEvent(state, ev) {
 }
 
 // Unknown prototypes (no footprint / reach entry) don't register at all —
-// downstream appliers see no record and skip the entity, as before.
+// downstream sees no record and skips the entity, as before.
+// Owners (inserters / miners) start their direction timeline `dirs` here: each
+// direction interval becomes one edge shell at finalize (rotation = retire +
+// mint, as the live logger did).
 function regBuilt(state, ev, unit) {
   const tick = ev.tick;
   if (ev.category === 'machine') {
@@ -127,22 +131,27 @@ function regBuilt(state, ev, unit) {
     if (fp == null) return;
     const tiles = footprintTiles(ev.location, fp);
     state.machines.set(unit, { unit, name: ev.name, location: ev.location, footprint: fp, tiles,
-                               bbox: footprintBBox(ev.location, fp), tb: tick, tr: null, recipes: [] });
+                               bbox: footprintBBox(ev.location, fp), tb: tick, tr: null, trSeq: null, recipes: [] });
     writeTiles(state, tiles, unit, 'machine', ev.name);
+    passiveOpen(state, tiles, unit, 'machine', tick);
   } else if (ev.category === 'miner') {
     const fp = MINER_FP[ev.name];
     if (fp == null) return;
     const tiles = footprintTiles(ev.location, fp);
-    state.miners.set(unit, { kind: 'miner', unit, name: ev.name, location: ev.location, direction: ev.direction ?? 0,
-                             footprint: fp, tiles, bbox: footprintBBox(ev.location, fp),
-                             dropTile: minerDrop(ev.location, ev.direction ?? 0, fp), edgeId: null, tb: tick, tr: null,
-                             resource: Array.isArray(ev.resources) ? (ev.resources[0] ?? null) : null });
+    const dir = ev.direction ?? 0;
     writeTiles(state, tiles, unit, 'miner', ev.name);
+    state.miners.set(unit, { kind: 'miner', unit, name: ev.name, location: ev.location, direction: dir,
+                             dirs: [{ dir, tick, seq: ++state.seq }],
+                             footprint: fp, tiles, bbox: footprintBBox(ev.location, fp),
+                             dropTile: minerDrop(ev.location, dir, fp), tb: tick, tr: null, trSeq: null,
+                             resource: Array.isArray(ev.resources) ? (ev.resources[0] ?? null) : null });
   } else if (ev.category === 'inserter') {
     if (!INSERTERS.has(ev.name)) return;
+    const dir = ev.direction ?? 0;
     state.inserters.set(unit, {
       kind: 'inserter', unit, name: ev.name, location: ev.location, tile: floorTile(ev.location),
-      direction: ev.direction ?? 0, reach: REACH[ev.name] ?? 1, edgeId: null, tb: tick, tr: null,
+      direction: dir, dirs: [{ dir, tick, seq: ++state.seq }],
+      reach: REACH[ev.name] ?? 1, tb: tick, tr: null, trSeq: null,
       // Filter spec narrows which of a drained machine's outputs actually rides the belt.
       useFilters: !!ev.inserterUseFilters,
       filterMode: ev.inserterFilterMode ?? null,
@@ -153,9 +162,10 @@ function regBuilt(state, ev, unit) {
     if (fp == null) return;
     const tiles = footprintTiles(ev.location, fp);
     state.buffers.set(unit, { unit, name: ev.name, location: ev.location, footprint: fp, tiles,
-                              bbox: footprintBBox(ev.location, fp), tb: tick, tr: null,
+                              bbox: footprintBBox(ev.location, fp), tb: tick, tr: null, trSeq: null,
                               storedItemDominant: ev.storedItemDominant ?? null });
     writeTiles(state, tiles, unit, 'buffer', ev.name);
+    passiveOpen(state, tiles, unit, 'buffer', tick);
   }
 }
 
@@ -163,16 +173,20 @@ function regRemoved(state, unit, tick) {
   const r = state.machines.get(unit) ?? state.miners.get(unit) ?? state.inserters.get(unit) ?? state.buffers.get(unit);
   if (!r || r.tr != null) return;
   r.tr = tick;
-  // Tile-index clearing mirrors the pre-refactor live registries exactly:
-  // machines and buffers clear their tiles; MINERS DO NOT (a removed miner's
-  // tiles stay in the index until overwritten — long-standing behavior the
-  // byte-identical gate preserves); inserters were never indexed.
-  if (state.machines.has(unit) || state.buffers.has(unit)) clearTiles(state, r.tiles, unit);
+  r.trSeq = ++state.seq;
+  // Tile clearing mirrors the pre-refactor live registries exactly: machines
+  // and buffers clear their tiles (and close their passive intervals); MINERS
+  // DO NOT (a removed miner's tiles stay in the index until overwritten —
+  // long-standing behavior the byte-identical gate preserves); inserters were
+  // never indexed.
+  if (state.machines.has(unit) || state.buffers.has(unit)) {
+    clearTiles(state, r.tiles, unit);
+    passiveClose(state, r.tiles, unit, tick);
+  }
 }
 
-// Fold mutate fields into the record. Returns the delta the edge applier needs:
-// it can no longer compare against the pre-fold direction, so the fold reports
-// whether the direction changed (a rotation retires + re-mints the owner edge).
+// Fold mutate fields into the record; a real direction change extends the
+// owner's direction timeline (one shell per interval at finalize).
 function regMutated(state, ev) {
   const r = state.inserters.get(ev.unit) ?? state.miners.get(ev.unit);
   if (!r) return;
@@ -183,8 +197,8 @@ function regMutated(state, ev) {
   }
   if (ev.direction === undefined || ev.direction === r.direction) return;
   r.direction = ev.direction;
+  r.dirs.push({ dir: ev.direction, tick: ev.tick, seq: ++state.seq });
   if (r.kind === 'miner') r.dropTile = minerDrop(r.location, r.direction, r.footprint);
-  return { directionChanged: true };
 }
 
 // A machine's recipe is kept as a per-machine TIMELINE — edges live across
@@ -204,11 +218,12 @@ function regRecipe(state, ev) {
 }
 
 // ── belt registration ─────────────────────────────────────────
-// Belt records keep LIVE-DELETE semantics (removal deletes the record): the
-// partition and edge layers read absence as "gone" throughout
-// (sameSegmentNeighbours, reconcile's departure pass, resolveBeltEdge, …).
-// Full-history belt records are deferred to the edges→finalize step, which
-// is what needs them.
+// One record object, two views: `state.belts` is the partition's LIVE working
+// set (removal deletes the entry — the partition and the live belt-edge diff
+// read absence as "gone"); `state.beltHist` keeps every record, `tr`/`trSeq`
+// stamped, for the finalize replay. Belt records carry a direction timeline
+// (`dirs` — lane sides are evaluated at a seq) and a segment-membership
+// timeline (`segTl` — appended by segments' join).
 //
 // The returned delta is segments' DIRTY MARK — the event's entity plus
 // everything in its inputs and outputs, BEFORE and after the fold. A removed
@@ -219,15 +234,26 @@ function regBelt(state, ev) {
   const dirty = beltDirtyMark(belts, ev);
   switch (ev.type) {
     case 'entity-built':
-      addBelt(belts, ev);
+      addBelt(state, ev, ev.unit);
+      passivePush(state, floorTile(ev.location), { op: 'o', unit: ev.unit, category: 'belt', tick: ev.tick, seq: ++state.seq });
       break;
-    case 'entity-removed':
+    case 'entity-removed': {
+      const b = belts.get(ev.unit);
       belts.delete(ev.unit);
+      if (b) { b.tr = ev.tick; b.trSeq = ++state.seq; }
+      passivePush(state, floorTile(ev.location), { op: 'c', unit: ev.unit, tick: ev.tick, seq: ++state.seq });
       break;
+    }
     case 'entity-mutated': {
       const b = belts.get(ev.unit);
       if (!b) return;                 // no record → nothing folded, nothing dirty
-      if (ev.direction        !== undefined) b.direction = ev.direction;
+      if (ev.direction !== undefined) {
+        if (ev.direction !== b.direction) b.dirs.push({ dir: ev.direction, tick: ev.tick, seq: ++state.seq });
+        b.direction = ev.direction;
+        // the live logger re-resolved lane sides on EVERY direction mutation,
+        // value-changed or not — log the rotation unconditionally
+        passivePush(state, floorTile(b.location), { op: 'r', unit: ev.unit, tick: ev.tick, seq: ++state.seq });
+      }
       if (ev.beltToGroundType !== undefined) b.beltToGroundType = ev.beltToGroundType;
       if (ev.undergroundPair  !== undefined) b.undergroundPair = ev.undergroundPair;
       if (ev.beltInputs       !== undefined) b.beltInputs = toSet(ev.beltInputs);
@@ -237,24 +263,32 @@ function regBelt(state, ev) {
       if (ev.splitterOutputPriority !== undefined) b.splitterOutputPriority = ev.splitterOutputPriority;
       break;
     }
-    case 'entity-replaced':
-      addBelt(belts, { ...ev, unit: ev.newUnit });
+    case 'entity-replaced': {
+      addBelt(state, ev, ev.newUnit);
+      const old = belts.get(ev.oldUnit);
       belts.delete(ev.oldUnit);
+      if (old) { old.tr = ev.tick; old.trSeq = ++state.seq; }
+      // a replace opens the new unit in place; the live logger never closed the
+      // old one (openUnit's implicit displacement covers it)
+      passivePush(state, floorTile(ev.location), { op: 'o', unit: ev.newUnit, category: 'belt', tick: ev.tick, seq: ++state.seq });
       break;
+    }
   }
   return { dirty };
 }
 
 // The folded belt rec. `tb` lives here, not on the segment tile entry, because
 // it's the entity's identity — it survives segment churn.
-function addBelt(belts, e) {
-  belts.set(e.unit, {
-    unit: e.unit,
+function addBelt(state, e, unit) {
+  const seq = ++state.seq;
+  const rec = {
+    unit,
     name: e.name,
     beltType: e.beltType,
     direction: e.direction ?? 0,
     location: e.location,
     tb: e.tick ?? null,
+    tr: null,
     beltToGroundType: e.beltToGroundType ?? null,
     undergroundPair: e.undergroundPair ?? null,
     beltInputs: toSet(e.beltInputs),
@@ -262,7 +296,12 @@ function addBelt(belts, e) {
     splitterFilter: e.splitterFilter ?? null,
     splitterInputPriority: e.splitterInputPriority ?? null,
     splitterOutputPriority: e.splitterOutputPriority ?? null,
-  });
+    seqB: seq, trSeq: null,
+    dirs: [{ dir: e.direction ?? 0, tick: e.tick ?? null, seq }],
+    segTl: [],
+  };
+  state.belts.set(unit, rec);
+  state.beltHist.set(unit, rec);
 }
 
 function beltDirtyMark(belts, e) {
@@ -289,40 +328,53 @@ function toSet(v) {
 }
 
 function writeTiles(state, tiles, unit, category, name) {
-  for (const t of tiles) state.tileEntities.set(tileKey(t.x, t.y), { unit, category, name });
+  for (const t of tiles) setEntityTile(state, t.x, t.y, { unit, category, name });
 }
 
 function clearTiles(state, tiles, unit) {
-  for (const t of tiles) {
-    const k = tileKey(t.x, t.y);
-    if (state.tileEntities.get(k)?.unit === unit) state.tileEntities.delete(k);
-  }
+  for (const t of tiles) clearEntityTile(state, t.x, t.y, unit);
 }
 
-// ── shared accessors ─────────────────────────────────────────
-
-// Entity occupying a tile (belt / machine / miner / buffer), or null.
-export function findEntityInTile(state, x, y) {
-  return state.tileEntities.get(tileKey(x, y)) ?? null;
+function passivePush(state, tile, entry) {
+  const k = tileKey(tile.x, tile.y);
+  let l = state.passive.get(k);
+  if (!l) state.passive.set(k, l = []);
+  l.push(entry);
 }
 
-// Index `rec = { unit, category, name }` at tile (x, y). Last writer wins —
-// callers clear a unit's tiles on removal before a new entity reuses them.
+function passiveOpen(state, tiles, unit, category, tick) {
+  for (const t of tiles) passivePush(state, t, { op: 'o', unit, category, tick, seq: ++state.seq });
+}
+
+function passiveClose(state, tiles, unit, tick) {
+  for (const t of tiles) passivePush(state, t, { op: 'c', unit, tick, seq: ++state.seq });
+}
+
+// ── tile occupancy (interval log; live semantics preserved) ───
+
+// Open an occupancy interval at (x, y), closing the current one — last writer
+// wins, as in the old live map.
 export function setEntityTile(state, x, y, rec) {
-  state.tileEntities.set(tileKey(x, y), rec);
-}
-
-// Clear tile (x, y) iff it is still held by `unit` (guards against clobbering a
-// tile a newer entity already took over).
-export function clearEntityTile(state, x, y, unit) {
   const k = tileKey(x, y);
-  const cur = state.tileEntities.get(k);
-  if (cur && cur.unit === unit) state.tileEntities.delete(k);
+  let log = state.tileEntities.get(k);
+  if (!log) state.tileEntities.set(k, log = []);
+  const seq = ++state.seq;
+  const last = log[log.length - 1];
+  if (last && last.seqR == null) last.seqR = seq;
+  log.push({ unit: rec.unit, category: rec.category, name: rec.name, seqB: seq });
 }
 
-// Live segment record a belt unit currently belongs to, or null. Bridges a belt
-// endpoint → its segment for edge segment-timeline updates.
-export function getSegmentFromUnit(state, unit) {
-  const sid = state.segOf.get(unit);
-  return sid != null ? (state.segs.get(sid) ?? null) : null;
+// Close the open interval at (x, y) iff it is still held by `unit` (guards
+// against clobbering a tile a newer entity already took over).
+export function clearEntityTile(state, x, y, unit) {
+  const log = state.tileEntities.get(tileKey(x, y));
+  const last = log?.[log.length - 1];
+  if (last && last.seqR == null && last.unit === unit) last.seqR = ++state.seq;
+}
+
+// Current occupant of a tile (belt / machine / miner / buffer), or null.
+export function findEntityInTile(state, x, y) {
+  const log = state.tileEntities.get(tileKey(x, y));
+  const last = log?.[log.length - 1];
+  return last && last.seqR == null ? last : null;
 }

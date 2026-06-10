@@ -9,13 +9,12 @@
 //                   state.registerEvent returns each belt event's dirty mark;
 //                   the caller accumulates a tick's dirty belt units, then
 //                   segments.advance() settles the tick ONCE on the settled
-//                   graph and RETURNS the tick's segment changes (belt-edge
-//                   deltas + moved belts) as one value.
+//                   graph (appending belt-edge deltas to the state's log).
 //   edges.mjs     — durable, tile-anchored edges (inserter / miner / belt↔belt),
 //                   each endpoint a tile with unit + segment occupancy
-//                   timelines. applyEvent mints/retires/morphs edges;
-//                   edges.advance() consumes segments' returned changes —
-//                   the driver never inspects them.
+//                   timelines. Derived ENTIRELY at finalize by replaying the
+//                   seq-stamped histories state recorded during the loop —
+//                   nothing edge-shaped runs per tick.
 //
 // Output shape: { durationTick, summary, clusters, beltSegments, edges } as the
 // `flow` top-level field on the per-run JSON. `null` when inputs are missing.
@@ -46,29 +45,18 @@ export function buildFlow(runDir, durationTick, { merged } = {}) {
 
   const events = _synthesiseEvents(mergedStream, durationTick);
 
-  // Drive the fold. Per tick, in order: apply every event (accumulating dirty
-  // belt units for segments, mutating edges in place), then settle the tick
-  // ONCE — segments.advance returns the tick's segment changes as a value,
-  // edges.advance consumes it. Events are tick-sorted, so a tick's events are
-  // contiguous.
+  // Drive the fold — two calls: register every event (per event, accumulating
+  // dirty belt units), then settle each tick ONCE. Events are tick-sorted, so
+  // a tick's events are contiguous. Everything else derives at finalize.
   let curTick = null;
   let dirty = new Set();
-  const settleTick = (tick) => {
-    const segChanges = segments.advance(state, dirty, tick);
-    edges.advance(state, segChanges, tick);
-    dirty = new Set();
-  };
   for (const ev of events) {
-    if (curTick !== null && ev.tick !== curTick) settleTick(curTick);
+    if (curTick !== null && ev.tick !== curTick) { segments.advance(state, dirty, curTick); dirty = new Set(); }
     curTick = ev.tick;
-    // Registration first (per event — the edges applier reads the post-fold
-    // record; mid-tick tile-index reads are observable, so this cannot batch
-    // per tick). A belt delta carries the dirty mark the settle consumes.
     const delta = registerEvent(state, ev);
     if (delta?.dirty) for (const u of delta.dirty) dirty.add(u);
-    edges.applyEvent(state, ev, delta);
   }
-  if (curTick !== null) settleTick(curTick);
+  if (curTick !== null) segments.advance(state, dirty, curTick);
 
   const { beltSegments } = segments.finalize(state, durationTick);
   const { edges: edgeList } = edges.finalize(state);

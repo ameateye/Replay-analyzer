@@ -113,10 +113,18 @@ function join(state, seg, u, tick) {        // u enters seg → open its tile oc
   state.segOf.set(u, seg.id);
   const b = state.belts.get(u);
   if (b) {
+    // Membership timeline on the belt record — the finalize replay's source
+    // for endpoint segment intervals (what updateSegments used to advance
+    // live). One entry per tick, LAST join wins: updateSegments ran once per
+    // settle with the final segOf, so mid-settle transient hops (a belt
+    // passing through a segment that immediately merges away) were invisible.
+    const tl = b.segTl, last = tl[tl.length - 1];
+    if (last && last.tick === tick) { last.seg = seg.id; last.seq = ++state.seq; }
+    else tl.push({ seg: seg.id, tick, seq: ++state.seq });
     const xy = tilesFor(b);
     seg.tiles.set(u, { xy, tb: tick });
-    // Belt tiles join the shared tile index here so edges' findEntityInTile
-    // resolves belts (segments owns belt tiles; edges only queries them).
+    // Belt tiles join the shared tile index here so the finalize replay (and
+    // findEntityInTile) resolve belts (segments owns belt tiles).
     for (const t of xy) setEntityTile(state, t.x, t.y, { unit: u, category: 'belt', name: b.name });
   }
 }
@@ -309,21 +317,17 @@ export function reconcile(state, dirty, tick) {
   return events;
 }
 
-// Per-tick settle, returned as one value (the seam edges.advance consumes —
-// the driver never inspects segment-event types). `beltEdges` preserves
-// reconcile's emission order; `moved` is the belts that may have changed
-// segment this tick: the directly-dirty belts (covers join-in-place, which
-// emits no event) plus the units carried by segment-created / -merged /
-// -split (merge-losers and split-peeled belts that aren't individually dirty).
+// Per-tick settle. reconcile's belt-edge deltas are appended (seq-stamped, in
+// emission order) to state.beltEdgeLog — the finalize replay's mint/retire
+// source. Segment lineage is already recorded on the segments themselves and
+// belt membership on the belt records (join), so nothing is returned.
 export function advance(state, dirty, tick) {
-  const moved = new Set(dirty);
-  const beltEdges = [];
   for (const se of reconcile(state, dirty, tick)) {
-    if (se.type === 'belt-edge-added')        beltEdges.push({ op: 'added', feeder: se.feeder, consumer: se.consumer });
-    else if (se.type === 'belt-edge-removed') beltEdges.push({ op: 'removed', feeder: se.feeder, consumer: se.consumer });
-    else if (se.units) for (const u of se.units) moved.add(u);
+    if (se.type === 'belt-edge-added' || se.type === 'belt-edge-removed') {
+      state.beltEdgeLog.push({ op: se.type === 'belt-edge-added' ? 'add' : 'rm',
+                               feeder: se.feeder, consumer: se.consumer, tick, seq: ++state.seq });
+    }
   }
-  return { beltEdges, moved };
 }
 
 // ── finalize ─────────────────────────────────────────────────

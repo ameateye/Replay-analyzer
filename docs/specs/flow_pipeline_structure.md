@@ -77,15 +77,14 @@ have landed). Each step takes the previous step's result **as a value**:
 flowchart TD
   subgraph TICK["per tick — in order, results passed as values"]
     direction TB
-    R["1 · delta = state.registerEvent(ev) — per event<br/>fold into records · report pre-fold changes"]
-    S["2 · segChanges = segments.advance(state, dirty, tick)<br/>settle belt graph (the one sequential step)"]
-    E["3 · edges.advance(state, segChanges, tick)<br/>(until the edges→finalize step removes it from the loop)"]
-    R --> S --> E
+    R["1 · delta = state.registerEvent(ev) — per event<br/>fold into records + seq-stamped histories · report pre-fold changes"]
+    S["2 · segments.advance(state, dirty, tick)<br/>settle belt graph (the one sequential step)"]
+    R --> S
   end
   TICK --> FIN
-  subgraph FIN["finalize — read-only derivations over the full-history records"]
+  subgraph FIN["finalize — read-only derivations over the recorded histories"]
     direction TB
-    C1["edges.build (after edges→finalize)"]
+    C1["edges.finalize(state) — the replay (§8)"]
     C2["contents.build(state, edges, segments)"]
     C3["clusters.build(state, edges)"]
   end
@@ -151,7 +150,8 @@ Run after **every** step, before starting the next:
 
    Progress: after step 0 — 2330; after step 1 — 2346; after step 2 — 2370 (`edges` 609→524, `clusters`
    438→407, `state` 80→224; the moves cost their documentation); after step 3 — 2362 (`segments` 449→333,
-   `state` 224→304, `flow-prep` 355→352 — first net decrease). The bulk is owed by steps 4–5.
+   `state` 224→304, `flow-prep` 355→352 — first net decrease); after step 4 — 2328 (`edges` 524→448,
+   `flow-prep` 352→340, `state` 304→354, `segments` 333→337). One line above baseline; step 5 owes the rest.
 
 ## 7. Sequencing
 
@@ -174,9 +174,14 @@ Run after **every** step, before starting the next:
    register → edges-apply; `segments.applyEvent` is gone (the module keeps only classification + lifecycle).
    Belt records stay live-delete (decision recorded in §3 — full-history belts arrive with step 4).
    *Gate: byte-identical; 23/23 tests.*
-4. **`edges` → finalize.** Rewrite the ledger as a finalize-time temporal join over `state` records +
-   segment timelines + a temporal tile index. Largest step; its internal design is specced when reached,
-   under this contract. *Diff: identical.*
+4. ✅ **`edges` → finalize** (2026-06-11). The ledger is derived by `edges.finalize(state)` replaying
+   seq-stamped histories (design: §8); `edges.applyEvent`/`edges.advance`, `updateSegments`, the endpoint
+   morphing, `edgesByTile` and the live-vs-rebuilt oracle are gone — the loop is two calls, and every
+   intra-tick edge-ordering rule is now data (`seq`). One intermediate gate failure: raw per-join membership
+   timelines exposed mid-settle transient hops (a belt passing through a segment that immediately merges
+   away) that the live `updateSegments` — running once per settle with the final `segOf` — never saw; fixed
+   by compacting `segTl` to one entry per tick, last join wins. *Gate: byte-identical; 22/22 tests (the
+   live-vs-rebuilt oracle test retired with the oracle).*
 5. **Cleanup & condense** — the explicit size step; the refactor is not done while the count is up. Targets:
    dedupe `numId` (×2), interval intersection (×3), and tile/footprint geometry (now split across `state`,
    `edges`, `clusters`); move event synthesis out of `flow-prep` into its own module so the driver reads as
@@ -197,7 +202,38 @@ explicit guards (`liveRec` in `edges.mjs`) to keep the output byte-identical:
 Removing the guards (and clearing miner tiles) is a small, deliberate behavior change once this refactor
 lands — each guard's comment marks the spot.
 
-## 8. Open decisions
+## 8. Step 4 internal design — record, then replay
 
-- **Internal shape of the edges temporal join** (step 4): decided and specced when the step starts — the
-  contract above holds regardless.
+Decided at step start. The byte-identical gate forces the join to reproduce mid-tick observability (the step-2
+finding) and every preserved quirk, so the design is **event-sourcing**: the loop records seq-stamped
+histories; `edges.finalize` replays them.
+
+**Loop-time — nothing edge-shaped runs.** The loop is literally two calls (`registerEvent`,
+`segments.advance`); `edges.applyEvent`/`edges.advance` cease to exist. What they maintained becomes
+history recording:
+
+- `state.seq` — one monotone counter bumped per recorded action. Ticks order the run; seqs order *within*
+  a tick (mid-tick reads are observable, so tick-resolution timelines are not enough).
+- **Tile log** — the live tile index becomes per-tile occupancy *intervals* (`seqB`/`seqR`), written by
+  exactly today's call sites (node registration, segments' join/leave). Current occupant = last open interval.
+- **Passive log** — per-tile open/close/rotate entries at the event moments where
+  `openEndpointAt`/`closeEndpointAt`/`refreshSidesAt` fire today: machines+buffers on their footprint tiles
+  at build/remove; belts at `floorTile(location)` at build/replace/remove/rotate. Miners never log — they
+  were owner-only (their lingering-seed behavior rides the tile log).
+- **Owner histories** — inserter/miner records carry a direction timeline; each direction interval is one
+  edge shell (rotation = retire + mint, as today).
+- **Belt history** — `state.belts` stays the live-delete working set the partition reads; the same record
+  objects also land in `state.beltHist` (removal stamps `tr`, record kept) and carry direction +
+  segment-membership timelines (membership appended by segments' `join`).
+- **Belt-edge log** — `segments.advance` appends reconcile's belt-edge deltas to `state.beltEdgeLog`
+  (emission order, seq-stamped). `updateSegments` dies — membership timelines replace it.
+
+**Finalize-time — `edges.finalize(state)` replays.** Shells (id chronology = mint-seq order across owner
+builds/rotations + belt-edge-added entries, no-op mints consuming no id) → per-endpoint fold (seed from the
+tile log at mint seq with the recTb liveness rule; arrivals/leaves/rotations from the passive log; `side` =
+last side-write; `segs` = membership overlay with the same dedupe / zero-length-interval semantics) →
+`annotateContents` (unchanged). JSON key-insertion order is replicated case-by-case — the byte gate enforces
+it.
+
+The live-vs-rebuilt oracle dies here (the join *is* a from-scratch rebuild); `flowEdges.test.ts` re-asserts
+its segment invariants against the built ledger instead of live state.

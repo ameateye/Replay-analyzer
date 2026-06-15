@@ -1,4 +1,14 @@
-import { createContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { fmtTime } from '../theme';
 import {
   RECIPE_ICON_TILES,
@@ -550,6 +560,44 @@ export type MapViewProps = {
   clusters?: FlowClusterLite[];
 };
 
+type TooltipState =
+  | { kind: 'entity'; name: string; en: number; px: number; py: number; sx: number; sy: number }
+  | { kind: 'flow'; id: string; sx: number; sy: number }
+  | { kind: 'cluster'; id: string; label: string; sub: string; sx: number; sy: number };
+
+export type MapTooltipHandle = { show: (t: TooltipState) => void; hide: () => void };
+
+// The hover tooltip owns its own state and is driven imperatively from
+// MapView's mousemove handler. Isolating it here means moving the cursor
+// over the map re-renders this tiny leaf instead of MapView and its ~45K
+// SVG children.
+const MapTooltip = forwardRef<MapTooltipHandle>(function MapTooltip(_props, ref) {
+  const [tip, setTip] = useState<TooltipState | null>(null);
+  useImperativeHandle(ref, () => ({ show: setTip, hide: () => setTip(null) }), []);
+  if (!tip) return null;
+  return (
+    <div className="run-map-tooltip" style={{ left: tip.sx, top: tip.sy }}>
+      {tip.kind === 'flow' ? (
+        <div className="run-map-tooltip-name">segment {tip.id}</div>
+      ) : tip.kind === 'cluster' ? (
+        <>
+          <div className="run-map-tooltip-name">{tip.label}</div>
+          <div className="run-map-tooltip-coords">{tip.sub}</div>
+          <div className="run-map-tooltip-unit">{tip.id}</div>
+        </>
+      ) : (
+        <>
+          <div className="run-map-tooltip-name">{tip.name}</div>
+          <div className="run-map-tooltip-coords">
+            x {tip.px.toFixed(1)} · y {tip.py.toFixed(1)}
+          </div>
+          {Number.isFinite(tip.en) && <div className="run-map-tooltip-unit">#{tip.en}</div>}
+        </>
+      )}
+    </div>
+  );
+});
+
 export function MapView({
   title = 'Map playback',
   mapUrl,
@@ -572,12 +620,7 @@ export function MapView({
 
   type VB = { x: number; y: number; w: number; h: number };
   const [vb, setVb] = useState<VB | null>(null);
-  const [tooltip, setTooltip] = useState<
-    | { kind: 'entity'; name: string; en: number; px: number; py: number; sx: number; sy: number }
-    | { kind: 'flow'; id: string; sx: number; sy: number }
-    | { kind: 'cluster'; id: string; label: string; sub: string; sx: number; sy: number }
-    | null
-  >(null);
+  const tooltipRef = useRef<MapTooltipHandle>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   // DOM refs kept as state (set via callback refs) so effects can
   // re-run when the elements attach. Plain useRef would race the
@@ -600,7 +643,15 @@ export function MapView({
   // strips them all without losing the per-overlay sub-controls.
   const [showFlow, setShowFlow] = useState(false);
   const [showClusters, setShowClusters] = useState(false);
-  const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
+  // Cluster hover highlight is applied imperatively (toggling `is-hot` on the
+  // hovered cluster <g>) so hovering doesn't rebuild the cluster node array.
+  const hotClusterRef = useRef<Element | null>(null);
+  const setHotCluster = (g: Element | null) => {
+    if (hotClusterRef.current === g) return;
+    hotClusterRef.current?.classList.remove('is-hot');
+    g?.classList.add('is-hot');
+    hotClusterRef.current = g;
+  };
   const [altMode, setAltMode] = useState(true);
   const [altRecipes, setAltRecipes] = useState(true);
   const [altSplitterArrows, setAltSplitterArrows] = useState(true);
@@ -633,6 +684,49 @@ export function MapView({
   // that don't pan/zoom with the map.
   const [chromeEl, setChromeEl] = useState<HTMLDivElement | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; vb0: VB } | null>(null);
+
+  // Pan/zoom is driven imperatively: writing the viewBox attribute directly
+  // instead of through React state avoids re-running this component (and
+  // reconciling its ~45K SVG children) on every wheel/drag frame. `vbRef` is
+  // the live viewBox the handlers read and mutate; React state (`vb`) is only
+  // the committed baseline (initial / reset / focus / gesture-end), kept in
+  // sync — and applied to the DOM — by the layout effect below.
+  const vbRef = useRef<VB | null>(null);
+  const vbRafRef = useRef(0);
+  const vbCommitTimer = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    vbRef.current = vb;
+    if (svgEl && vb) svgEl.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  }, [vb, svgEl]);
+  // Apply a new viewBox to the DOM at most once per animation frame.
+  const applyVb = (next: VB) => {
+    vbRef.current = next;
+    if (vbRafRef.current) return;
+    vbRafRef.current = requestAnimationFrame(() => {
+      vbRafRef.current = 0;
+      const v = vbRef.current;
+      if (svgEl && v) svgEl.setAttribute('viewBox', `${v.x} ${v.y} ${v.w} ${v.h}`);
+    });
+  };
+  // Commit the live viewBox back to React state once a gesture settles, so
+  // state stays consistent without paying a render per frame during it.
+  const commitVb = () => {
+    if (vbRef.current) setVb(vbRef.current);
+  };
+  const scheduleVbCommit = () => {
+    if (vbCommitTimer.current != null) clearTimeout(vbCommitTimer.current);
+    vbCommitTimer.current = window.setTimeout(() => {
+      vbCommitTimer.current = null;
+      commitVb();
+    }, 200);
+  };
+  useEffect(
+    () => () => {
+      if (vbRafRef.current) cancelAnimationFrame(vbRafRef.current);
+      if (vbCommitTimer.current != null) clearTimeout(vbCommitTimer.current);
+    },
+    [],
+  );
 
   // Cursors track which prefix of byTb / byTr have already been applied to
   // the DOM. Stored in refs so playback / scrubbing don't trigger re-renders.
@@ -947,21 +1041,20 @@ export function MapView({
   // Indirect through a ref so the closure always reads current state.
   const wheelHandlerRef = useRef<(e: WheelEvent) => void>(() => {});
   wheelHandlerRef.current = (e: WheelEvent) => {
-    if (!vb) return;
+    const v = vbRef.current;
+    if (!v) return;
     e.preventDefault();
     const target = e.currentTarget as SVGSVGElement;
     const rect = target.getBoundingClientRect();
-    const { wx, wy } = screenToWorld(rect, vb, e.clientX, e.clientY);
+    const { wx, wy } = screenToWorld(rect, v, e.clientX, e.clientY);
     const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
-    setVb(v => {
-      if (!v) return v;
-      const nw = clamp(v.w * factor, 2, 5000);
-      const nh = clamp(v.h * factor, 2, 5000);
-      const fit = fitRect(rect.width, rect.height, nw, nh);
-      const fxIn = (e.clientX - rect.left - fit.offsetX) / fit.fitW;
-      const fyIn = (e.clientY - rect.top  - fit.offsetY) / fit.fitH;
-      return { x: wx - fxIn * nw, y: wy - fyIn * nh, w: nw, h: nh };
-    });
+    const nw = clamp(v.w * factor, 2, 5000);
+    const nh = clamp(v.h * factor, 2, 5000);
+    const fit = fitRect(rect.width, rect.height, nw, nh);
+    const fxIn = (e.clientX - rect.left - fit.offsetX) / fit.fitW;
+    const fyIn = (e.clientY - rect.top  - fit.offsetY) / fit.fitH;
+    applyVb({ x: wx - fxIn * nw, y: wy - fyIn * nh, w: nw, h: nh });
+    scheduleVbCommit();
   };
   useEffect(() => {
     if (!svgEl) return;
@@ -970,9 +1063,10 @@ export function MapView({
     return () => svgEl.removeEventListener('wheel', listener);
   }, [svgEl]);
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (e.button !== 0 || !vb) return;
+    const v0 = vbRef.current;
+    if (e.button !== 0 || !v0) return;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    dragRef.current = { startX: e.clientX, startY: e.clientY, vb0: vb };
+    dragRef.current = { startX: e.clientX, startY: e.clientY, vb0: v0 };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = dragRef.current; if (!d) return;
@@ -980,11 +1074,13 @@ export function MapView({
     const fit = fitRect(rect.width, rect.height, d.vb0.w, d.vb0.h);
     const dxWorld = (e.clientX - d.startX) * (d.vb0.w / fit.fitW);
     const dyWorld = (e.clientY - d.startY) * (d.vb0.h / fit.fitH);
-    setVb({ x: d.vb0.x - dxWorld, y: d.vb0.y - dyWorld, w: d.vb0.w, h: d.vb0.h });
+    applyVb({ x: d.vb0.x - dxWorld, y: d.vb0.y - dyWorld, w: d.vb0.w, h: d.vb0.h });
   };
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!dragRef.current) return;
     dragRef.current = null;
     (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    commitVb();
   };
 
   // Hover tooltip — event delegation on the SVG. Recipe overlays already
@@ -992,7 +1088,7 @@ export function MapView({
   // Flow segments expose their wrapper <g data-flow-id> via the path stroke,
   // so a SVGPathElement hit walks up to find the segment ID.
   const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (dragRef.current) { if (tooltip) setTooltip(null); return; }
+    if (dragRef.current) { tooltipRef.current?.hide(); setHotCluster(null); return; }
     const t = e.target as Element;
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -1003,30 +1099,31 @@ export function MapView({
       const g = t.closest('[data-flow-id]');
       if (g) {
         const id = g.getAttribute('data-flow-id') ?? '';
-        setTooltip({ kind: 'flow', id, sx, sy });
+        setHotCluster(null);
+        tooltipRef.current?.show({ kind: 'flow', id, sx, sy });
         return;
       }
     }
     // Cluster rects: hovering any rect highlights the whole cluster (all its
-    // disjoint sub-blocks) via hoveredClusterId, and shows a cluster tooltip.
+    // disjoint sub-blocks) via the `is-hot` class, and shows a cluster tooltip.
     const cg = t.closest('[data-cluster-id]');
     if (cg) {
       const id = cg.getAttribute('data-cluster-id') ?? '';
-      if (hoveredClusterId !== id) setHoveredClusterId(id);
-      setTooltip({ kind: 'cluster', id, label: cg.getAttribute('data-cluster-label') ?? id, sub: cg.getAttribute('data-cluster-sub') ?? '', sx, sy });
+      setHotCluster(cg);
+      tooltipRef.current?.show({ kind: 'cluster', id, label: cg.getAttribute('data-cluster-label') ?? id, sub: cg.getAttribute('data-cluster-sub') ?? '', sx, sy });
       return;
     }
-    if (hoveredClusterId !== null) setHoveredClusterId(null);
-    if (!(t instanceof SVGUseElement)) { if (tooltip) setTooltip(null); return; }
+    setHotCluster(null);
+    if (!(t instanceof SVGUseElement)) { tooltipRef.current?.hide(); return; }
     const name = t.getAttribute('data-name');
     const pxStr = t.getAttribute('data-px');
     const pyStr = t.getAttribute('data-py');
     const enStr = t.getAttribute('data-en');
     if (name === null || pxStr === null || pyStr === null) {
-      if (tooltip) setTooltip(null);
+      tooltipRef.current?.hide();
       return;
     }
-    setTooltip({
+    tooltipRef.current?.show({
       kind: 'entity',
       name,
       en: enStr === null ? NaN : parseInt(enStr, 10),
@@ -1036,7 +1133,7 @@ export function MapView({
       sy,
     });
   };
-  const onMouseLeave = () => { if (tooltip) setTooltip(null); if (hoveredClusterId !== null) setHoveredClusterId(null); };
+  const onMouseLeave = () => { tooltipRef.current?.hide(); setHotCluster(null); };
   const resetView = () => {
     if (!data) return;
     const [x, y, w, h] = data.viewBox;
@@ -1350,12 +1447,13 @@ export function MapView({
       if (tick < c.tb) continue;
       if (c.tr !== undefined && tick >= c.tr) continue;
       const color = clusterColor(c.id);
-      const hot = hoveredClusterId === c.id;
       const rectEls: ReactNode[] = [];
       for (let i = 0; i < c.rects.length; i++) {
         const r = c.rects[i];
         if (tick < r.tb) continue;
         if (r.tr !== undefined && tick >= r.tr) continue;
+        // Base styling; the hovered cluster's <g> gets the `is-hot` class
+        // applied imperatively, and CSS bumps fill-opacity / stroke-width.
         rectEls.push(
           <rect
             key={i}
@@ -1364,9 +1462,9 @@ export function MapView({
             width={Math.max(r.maxX - r.minX + 1, 0.5)}
             height={Math.max(r.maxY - r.minY + 1, 0.5)}
             fill={color}
-            fillOpacity={hot ? 0.34 : 0.15}
+            fillOpacity={0.15}
             stroke={color}
-            strokeWidth={hot ? 0.24 : 0.1}
+            strokeWidth={0.1}
             strokeLinejoin="round"
           />
         );
@@ -1386,7 +1484,7 @@ export function MapView({
       );
     }
     return out;
-  }, [clusters, tick, hoveredClusterId]);
+  }, [clusters, tick]);
 
   // Player marker — current interpolated position
   const playerPos = useMemo(() => {
@@ -1533,10 +1631,11 @@ export function MapView({
       )}
 
       <div className="run-map-canvas-wrap" ref={wrapRef} style={containerStyle}>
+        {/* viewBox is set imperatively (layout effect + rAF) so pan/zoom
+            doesn't re-render this component's ~45K SVG children per frame. */}
         <svg
           ref={setSvgEl}
           className="run-map-canvas"
-          viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
           preserveAspectRatio="xMidYMid meet"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -1599,32 +1698,7 @@ export function MapView({
           </MapViewChromeContext.Provider>
         </svg>
         <div className="run-map-chrome" ref={setChromeEl} />
-        {tooltip && (
-          <div
-            className="run-map-tooltip"
-            style={{ left: tooltip.sx, top: tooltip.sy }}
-          >
-            {tooltip.kind === 'flow' ? (
-              <div className="run-map-tooltip-name">segment {tooltip.id}</div>
-            ) : tooltip.kind === 'cluster' ? (
-              <>
-                <div className="run-map-tooltip-name">{tooltip.label}</div>
-                <div className="run-map-tooltip-coords">{tooltip.sub}</div>
-                <div className="run-map-tooltip-unit">{tooltip.id}</div>
-              </>
-            ) : (
-              <>
-                <div className="run-map-tooltip-name">{tooltip.name}</div>
-                <div className="run-map-tooltip-coords">
-                  x {tooltip.px.toFixed(1)} · y {tooltip.py.toFixed(1)}
-                </div>
-                {Number.isFinite(tooltip.en) && (
-                  <div className="run-map-tooltip-unit">#{tooltip.en}</div>
-                )}
-              </>
-            )}
-          </div>
-        )}
+        <MapTooltip ref={tooltipRef} />
       </div>
     </div>
   );

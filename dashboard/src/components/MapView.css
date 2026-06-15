@@ -201,6 +201,15 @@
   pointer-events: auto;
 }
 
+/* Cluster hover highlight — the hovered cluster's <g> gets `.is-hot` applied
+   imperatively; CSS overrides the rects' base fill-opacity / stroke-width so
+   hovering doesn't rebuild the cluster node array. (Author CSS wins over the
+   rects' presentation attributes.) */
+#run-map-clusters g.is-hot rect {
+  fill-opacity: 0.34;
+  stroke-width: 0.24;
+}
+
 /* Hover tooltip — positioned at cursor inside .run-map-canvas-wrap. */
 .run-map-tooltip {
   position: absolute;

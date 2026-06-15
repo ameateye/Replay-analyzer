@@ -3,7 +3,8 @@ import { RunOverview } from './components/RunOverview';
 import { PhaseAnalyzer } from './components/PhaseAnalyzer';
 import { defaultPhase, hasPhaseWidget } from './components/phaseRegistry';
 import { GameDataProvider } from './server/GameDataContext';
-import { runMetas, defaultMeta, loadRun, type Run } from './data';
+import { RunPicker } from './components/RunPicker';
+import { defaultMeta, loadRun, type Run } from './data';
 import { fmtTime } from './theme';
 
 export function App() {
@@ -42,21 +43,7 @@ export function App() {
               {run ? fmtTime(run.durationMin) : '…'}
             </span>
           </div>
-          {runMetas.length > 1 && (
-            <div className="run-picker" role="tablist" aria-label="Select run">
-              {runMetas.map(m => (
-                <button
-                  key={m.name}
-                  role="tab"
-                  aria-selected={m.name === runName}
-                  className={m.name === runName ? 'run-picker__tab run-picker__tab--active' : 'run-picker__tab'}
-                  onClick={() => setRunName(m.name)}
-                >
-                  {m.name}
-                </button>
-              ))}
-            </div>
-          )}
+          <RunPicker value={runName} onChange={setRunName} />
         </header>
         {run && activePhase ? (
           <RunOverview

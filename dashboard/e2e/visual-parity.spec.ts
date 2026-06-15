@@ -50,9 +50,11 @@ const CASES: Array<{ run: string; phase: string }> = [
 
 async function gotoAndSelect(page: Page, url: string, runName: string, phase: string) {
   await page.goto(url, { waitUntil: 'networkidle' });
-  // Wait for the run picker to materialize (game-data fetched + react render)
+  // Wait for the run picker to materialize (game-data fetched + react render),
+  // then open the dropdown and pick the run.
   await page.locator('.run-picker').waitFor({ state: 'visible' });
-  await page.locator('.run-picker__tab', { hasText: runName }).click();
+  await page.locator('.run-picker__toggle').click();
+  await page.locator('.run-picker__option', { hasText: runName }).click();
   // The phase strip block lives inside the SVG; aria-label is "Select X phase analyzer"
   await page
     .getByRole('button', { name: new RegExp(`Select ${escapeRegex(phase)} phase`) })

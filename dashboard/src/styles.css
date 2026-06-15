@@ -143,27 +143,30 @@ h1, h2, h3, h4, h5 {
   margin-right: 6px;
 }
 
-/* --- Run picker (game-style tab strip) ---
-   Default: medium-gray tab with a neutral inset bevel.
-   Hover:   orange `#e39827` with warm bevel + outer orange halo.
-   Active:  panel face with cream caption text — "merges into" the panel
-            it controls below, like an active tab in the game UI. */
+/* --- Run picker (game-style dropdown) ---
+   Replaces the old horizontal tab strip, which overflowed the header past
+   ~8 runs. A single beveled toggle opens a scrollable, leaderboard-ordered
+   list. Toggle reuses the gray tab bevel; options hover orange and the
+   active option reads as the panel face with cream caption text. */
 .run-picker {
-  display: inline-flex;
+  position: relative;
   flex-shrink: 0;
-  gap: 4px;
 }
 
-.run-picker__tab {
+.run-picker__toggle {
   appearance: none;
   border: none;
-  padding: 9px 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 150px;
+  padding: 9px 14px;
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.2px;
   cursor: pointer;
-  border-radius: 4px 4px 0 0;
+  border-radius: 4px;
   background-color: var(--fac-tab-bg);
   color: var(--fac-tab-text);
   box-shadow:
@@ -175,7 +178,8 @@ h1, h2, h3, h4, h5 {
   transition: background-color 80ms linear, box-shadow 80ms linear;
 }
 
-.run-picker__tab:hover {
+.run-picker__toggle:hover,
+.run-picker--open .run-picker__toggle {
   background-color: var(--fac-accent);
   color: var(--fac-tab-text);
   box-shadow:
@@ -185,18 +189,79 @@ h1, h2, h3, h4, h5 {
     inset  4px  0px 1px -2px #8b6325,
     inset -4px  0px 1px -2px #4a300c,
     0px 0px 8px var(--fac-accent);
-  position: relative;
-  z-index: 1;
 }
 
-.run-picker__tab--active,
-.run-picker__tab--active:hover {
+.run-picker__current {
+  flex: 1 1 auto;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-picker__caret {
+  font-size: 10px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+.run-picker--open .run-picker__caret {
+  transform: rotate(180deg);
+}
+
+.run-picker__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  min-width: 100%;
+  max-height: 320px;
+  overflow-y: auto;
   background-color: var(--fac-panel);
+  border: 2px solid var(--fac-border);
+  border-radius: 4px;
+  box-shadow: 0px 6px 16px rgba(0, 0, 0, 0.55);
+}
+
+.run-picker__option {
+  appearance: none;
+  border: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 3px;
+  background-color: transparent;
+  color: var(--fac-tab-text);
+  font-variant-numeric: tabular-nums;
+  transition: background-color 60ms linear, color 60ms linear;
+}
+
+.run-picker__option:hover {
+  background-color: var(--fac-accent);
+  color: var(--fac-tab-text);
+}
+
+.run-picker__option--active {
   color: var(--fac-text);
-  box-shadow:
-    inset  0px  4px 1px -2px #686868,
-    inset  4px  0px 1px -2px #1c1c1c,
-    inset -4px  0px 1px -2px #1a1a1a,
-    0px 6px 4px var(--fac-panel),
-    0px 0px 4px #101010;
+  background-color: var(--fac-tab-bg);
+}
+
+.run-picker__check {
+  display: inline-block;
+  width: 12px;
+  color: var(--fac-accent-warm);
+}
+
+.run-picker__option:hover .run-picker__check {
+  color: var(--fac-tab-text);
 }

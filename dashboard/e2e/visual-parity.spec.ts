@@ -51,10 +51,18 @@ const CASES: Array<{ run: string; phase: string }> = [
 async function gotoAndSelect(page: Page, url: string, runName: string, phase: string) {
   await page.goto(url, { waitUntil: 'networkidle' });
   // Wait for the run picker to materialize (game-data fetched + react render),
-  // then open the dropdown and pick the run.
+  // then pick the run. This runs against BOTH local and the published site,
+  // which may differ across a deploy: the current UI is a dropdown
+  // (.run-picker__toggle → .run-picker__option), the older one a tab strip
+  // (.run-picker__tab). Support both so parity holds during the transition.
   await page.locator('.run-picker').waitFor({ state: 'visible' });
-  await page.locator('.run-picker__toggle').click();
-  await page.locator('.run-picker__option', { hasText: runName }).click();
+  const toggle = page.locator('.run-picker__toggle');
+  if (await toggle.count()) {
+    await toggle.click();
+    await page.locator('.run-picker__option', { hasText: runName }).click();
+  } else {
+    await page.locator('.run-picker__tab', { hasText: runName }).click();
+  }
   // The phase strip block lives inside the SVG; aria-label is "Select X phase analyzer"
   await page
     .getByRole('button', { name: new RegExp(`Select ${escapeRegex(phase)} phase`) })

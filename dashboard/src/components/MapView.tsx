@@ -1315,7 +1315,9 @@ export function MapView({
   // a node. Geometry is precomputed in `flowGeometry`, so the per-
   // tick work is one `activeItems()` scan per lane + JSX assembly.
   const flowSegmentNodes = useMemo(() => {
-    if (!flowSegments || flowSegments.length === 0) return null;
+    // Don't build the layer while it's hidden — otherwise playback rebuilds
+    // ~1.4K segment nodes every tick for a layer the user can't see.
+    if (!showFlow || !flowSegments || flowSegments.length === 0) return null;
     const renderIdentifier = (item: string, x: number, y: number, keyPrefix: string) => {
       const sid = itemSpriteId(item, sprites);
       if (sid) {
@@ -1435,13 +1437,15 @@ export function MapView({
       );
     }
     return out;
-  }, [flowSegments, sprites, tick]);
+  }, [flowSegments, sprites, tick, showFlow]);
 
   // Cluster overlay — one translucent rect per disjoint sub-block, all rects
   // of a cluster sharing its colour. Tick-filtered at both the cluster and the
   // rect [tb,tr) level. Hovering any rect highlights the whole cluster.
   const clusterNodes = useMemo(() => {
-    if (!clusters || clusters.length === 0) return null;
+    // Skip building hidden clusters — playback would otherwise rebuild
+    // thousands of rects per tick for a layer that's toggled off.
+    if (!showClusters || !clusters || clusters.length === 0) return null;
     const out: ReactNode[] = [];
     for (const c of clusters) {
       if (tick < c.tb) continue;
@@ -1484,7 +1488,7 @@ export function MapView({
       );
     }
     return out;
-  }, [clusters, tick]);
+  }, [clusters, tick, showClusters]);
 
   // Player marker — current interpolated position
   const playerPos = useMemo(() => {

@@ -249,3 +249,87 @@
   stroke: #1d1d1d;
   stroke-width: 0.08;
 }
+
+/* Info panel — opens below the canvas when a tile is clicked. General-purpose
+   target inspector (not QA-only); shows the target's identity now, with a
+   placeholder for deeper detail later. Sits inside .run-map-player, below
+   .run-map-canvas-wrap. */
+.run-map-info {
+  border-top: 1px solid #161616;
+  background: #2a2a2a;
+  padding: 10px 14px 12px;
+  font-size: 12px;
+  color: #b8b8b8;
+}
+.run-map-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.run-map-info-kind {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+.run-map-info-close {
+  appearance: none;
+  border: 1px solid #161616;
+  background: #3a3a3a;            /* COLORS.surfaceMuted */
+  color: #ffe6c0;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  font-size: 14px;
+  padding: 0;
+  cursor: pointer;
+}
+.run-map-info-close:hover {
+  background: #4a4a4a;
+  border-color: #e39827;          /* accent on hover */
+}
+.run-map-info-title {
+  color: #ffe6c0;
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.run-map-info-row {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+}
+.run-map-info-row .k {
+  flex: 0 0 auto;
+  min-width: 72px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  color: #888;
+}
+.run-map-info-row .v {
+  color: #b8b8b8;
+  font-variant-numeric: tabular-nums;
+}
+.run-map-info-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #232323;
+}
+.run-map-info-section-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 4px;
+}
+.run-map-info-placeholder {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #414141;
+  color: #777;
+  font-style: italic;
+  line-height: 1.4;
+}

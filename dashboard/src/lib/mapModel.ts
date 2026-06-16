@@ -20,7 +20,8 @@ export type RecipeEvent = { ts: number; n: string };
 // (e.g. an inserter has base + arm + indicators + shadow); they share
 // tb/tr because they were built/removed together.
 export type Renderable = {
-  en: number;
+  en: number;          // prep-assigned index (the data-en the renderable carries)
+  un?: number;         // Factorio unitNumber — present once map data is rebuilt
   name: string;
   px: number;
   py: number;

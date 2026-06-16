@@ -330,6 +330,7 @@ export function buildMapData(runName, { phases = null, miners = null, merged = n
         if (!sprites[layer.sid]) { missingSprites++; continue; }
         const out = {
           name: f.name,
+          un:   e.un,
           px:   f.px, en: f.en, py: f.py,
           ox:   round4(layer.ox),
           oy:   round4(layer.oy),

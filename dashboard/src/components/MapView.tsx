@@ -16,6 +16,7 @@ import {
   SPLITTER_ARROW_PATH,
   SPLITTER_ARROW_SHADOW_OFFSET,
   ticksToMin,
+  recipeAt,
   recipeSpriteId,
   filterIconSpriteId,
   splitterArrowPos,
@@ -496,6 +497,14 @@ const TICKS_PER_SECOND = 60;
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
+// Factorio 2.0 16-way direction (0=N, 4=E, 8=S, 12=W) → compass label.
+// Splitter/inserter `dir` and per-tile belt `direction` share this encoding.
+const DIR_LABELS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+function dirLabel(d: number | undefined): string | null {
+  if (d == null) return null;
+  return DIR_LABELS[Math.round(d / 2) % 8] ?? null;
+}
+
 // Compute the actual fitted rect inside the SVG viewport for preserveAspectRatio="xMidYMid meet"
 function fitRect(viewportW: number, viewportH: number, vbW: number, vbH: number) {
   const sx = viewportW / vbW, sy = viewportH / vbH;
@@ -560,10 +569,20 @@ export type MapViewProps = {
   clusters?: FlowClusterLite[];
 };
 
-type TooltipState =
-  | { kind: 'entity'; name: string; en: number; px: number; py: number; sx: number; sy: number }
-  | { kind: 'flow'; id: string; sx: number; sy: number }
-  | { kind: 'cluster'; id: string; label: string; sub: string; sx: number; sy: number };
+// Composite hit result for hover + click: the tile under the cursor plus
+// everything on it — the entity (the headline), and the belt segment and/or
+// machine cluster the tile belongs to. Resolved once and shared by the hover
+// tooltip (here, + cursor coords) and the click panel (below the canvas).
+// Segment/cluster come from the flow data by tile, so they resolve whether or
+// not those layers are toggled on. An empty tile (no entity) → null → clear.
+type DetailRow = { label: string; value: string };
+export type TileTarget = {
+  tile: { x: number; y: number };
+  entity: { name: string; en: number; un?: number; px: number; py: number; tb?: number; details: DetailRow[] };
+  segment?: { id: string };
+  cluster?: { id: string; recipe: string; machines: number; kind: string; blocks: number };
+};
+type TooltipState = TileTarget & { sx: number; sy: number };
 
 export type MapTooltipHandle = { show: (t: TooltipState) => void; hide: () => void };
 
@@ -577,22 +596,18 @@ const MapTooltip = forwardRef<MapTooltipHandle>(function MapTooltip(_props, ref)
   if (!tip) return null;
   return (
     <div className="run-map-tooltip" style={{ left: tip.sx, top: tip.sy }}>
-      {tip.kind === 'flow' ? (
-        <div className="run-map-tooltip-name">segment {tip.id}</div>
-      ) : tip.kind === 'cluster' ? (
-        <>
-          <div className="run-map-tooltip-name">{tip.label}</div>
-          <div className="run-map-tooltip-coords">{tip.sub}</div>
-          <div className="run-map-tooltip-unit">{tip.id}</div>
-        </>
-      ) : (
-        <>
-          <div className="run-map-tooltip-name">{tip.name}</div>
-          <div className="run-map-tooltip-coords">
-            x {tip.px.toFixed(1)} · y {tip.py.toFixed(1)}
-          </div>
-          {Number.isFinite(tip.en) && <div className="run-map-tooltip-unit">#{tip.en}</div>}
-        </>
+      <div className="run-map-tooltip-name">{tip.entity.name}</div>
+      <div className="run-map-tooltip-coords">
+        tile {tip.tile.x}, {tip.tile.y}
+        {tip.entity.un !== undefined && <> · unit #{tip.entity.un}</>}
+      </div>
+      {tip.entity.details.map((d, i) => (
+        <div key={i} className="run-map-tooltip-unit">{d.label}: {d.value}</div>
+      ))}
+      {tip.cluster && (
+        <div className="run-map-tooltip-unit">
+          cluster {tip.cluster.id} · {tip.cluster.recipe} · {tip.cluster.machines} machines
+        </div>
       )}
     </div>
   );
@@ -620,6 +635,9 @@ export function MapView({
 
   type VB = { x: number; y: number; w: number; h: number };
   const [vb, setVb] = useState<VB | null>(null);
+  // Clicked target shown in the info panel below the map (click-to-select).
+  // The panel re-render is cheap, so this stays React state (unlike hover).
+  const [selected, setSelected] = useState<TileTarget | null>(null);
   const tooltipRef = useRef<MapTooltipHandle>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   // DOM refs kept as state (set via callback refs) so effects can
@@ -684,6 +702,9 @@ export function MapView({
   // that don't pan/zoom with the map.
   const [chromeEl, setChromeEl] = useState<HTMLDivElement | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; vb0: VB } | null>(null);
+  // True once a pointer gesture moved beyond a few px (a pan, not a click) —
+  // read by the trailing click so dragging never changes the panel selection.
+  const pointerMovedRef = useRef(false);
 
   // Pan/zoom is driven imperatively: writing the viewBox attribute directly
   // instead of through React state avoids re-running this component (and
@@ -810,6 +831,53 @@ export function MapView({
   const splitterMarkers = useMemo(() => data?.splitterMarkers ?? [], [data]);
   const inserterMarkers = useMemo(() => data?.inserterMarkers ?? [], [data]);
   const roboportMarkers = useMemo(() => data?.roboportMarkers ?? [], [data]);
+
+  // Lookups for the hover/click hit-test, all keyed by `en` (the prep index
+  // the renderable <use> carries as data-en) so an entity's recipe / facing
+  // resolves in O(1) on hover.
+  const recipeByEn = useMemo(() => {
+    const m = new Map<number, (typeof recipeMachines)[number]>();
+    for (const r of recipeMachines) m.set(r.en, r);
+    return m;
+  }, [recipeMachines]);
+  const splitterByEn = useMemo(() => {
+    const m = new Map<number, (typeof splitterMarkers)[number]>();
+    for (const s of splitterMarkers) m.set(s.en, s);
+    return m;
+  }, [splitterMarkers]);
+  const inserterByEn = useMemo(() => {
+    const m = new Map<number, (typeof inserterMarkers)[number]>();
+    for (const s of inserterMarkers) m.set(s.en, s);
+    return m;
+  }, [inserterMarkers]);
+
+  // Belt-segment lookups for the hit-test: id → segment (for lane contents),
+  // and tile "x,y" → the segment(s) that occupied it, each entry carrying its
+  // [tb,tr) window and the per-tile flow direction. Built once per run; the
+  // hit-test reads the entry alive at the current tick, so a tile's segment,
+  // belt facing, and carried items resolve from the data whether or not the
+  // Flow layer is shown.
+  const segmentById = useMemo(() => {
+    const m = new Map<string, FlowSegmentLite>();
+    if (flowSegments) for (const s of flowSegments) m.set(s.id, s);
+    return m;
+  }, [flowSegments]);
+  const segmentTileIndex = useMemo(() => {
+    const idx = new Map<string, { id: string; dir?: number; tb: number; tr?: number }[]>();
+    if (!flowSegments) return idx;
+    const combineTr = (a?: number, b?: number) =>
+      a === undefined ? b : b === undefined ? a : Math.min(a, b);
+    for (const s of flowSegments) {
+      if (!s.tileLocations) continue;
+      for (const t of s.tileLocations) {
+        const key = `${t.x},${t.y}`;
+        const entry = { id: s.id, dir: t.direction, tb: Math.max(t.tb, s.tb), tr: combineTr(t.tr, s.tr) };
+        const arr = idx.get(key);
+        if (arr) arr.push(entry); else idx.set(key, [entry]);
+      }
+    }
+    return idx;
+  }, [flowSegments]);
 
   // Apply tick changes incrementally to the DOM. Re-runs when the
   // container element attaches (via callback ref → state), so the
@@ -1066,10 +1134,13 @@ export function MapView({
     const v0 = vbRef.current;
     if (e.button !== 0 || !v0) return;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    pointerMovedRef.current = false;
     dragRef.current = { startX: e.clientX, startY: e.clientY, vb0: v0 };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = dragRef.current; if (!d) return;
+    // Past a few px the gesture is a pan, not a click.
+    if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 3) pointerMovedRef.current = true;
     const rect = e.currentTarget.getBoundingClientRect();
     const fit = fitRect(rect.width, rect.height, d.vb0.w, d.vb0.h);
     const dxWorld = (e.clientX - d.startX) * (d.vb0.w / fit.fitW);
@@ -1083,57 +1154,125 @@ export function MapView({
     commitVb();
   };
 
-  // Hover tooltip — event delegation on the SVG. Recipe overlays already
-  // disable pointer events, so the topmost hit is normally an entity <use>.
-  // Flow segments expose their wrapper <g data-flow-id> via the path stroke,
-  // so a SVGPathElement hit walks up to find the segment ID.
-  const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (dragRef.current) { tooltipRef.current?.hide(); setHotCluster(null); return; }
-    const t = e.target as Element;
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const rect = wrap.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
-    if (t instanceof SVGPathElement) {
-      const g = t.closest('[data-flow-id]');
-      if (g) {
-        const id = g.getAttribute('data-flow-id') ?? '';
-        setHotCluster(null);
-        tooltipRef.current?.show({ kind: 'flow', id, sx, sy });
-        return;
+  // Belt segment occupying a tile at the current tick (id + per-tile facing).
+  const segmentAtTile = (x: number, y: number): { id: string; dir?: number } | undefined => {
+    const arr = segmentTileIndex.get(`${x},${y}`);
+    if (!arr) return undefined;
+    for (const e of arr) {
+      if (e.tb <= tick && (e.tr === undefined || tick < e.tr)) return { id: e.id, dir: e.dir };
+    }
+    return undefined;
+  };
+
+  // Machine/furnace/miner/buffer cluster covering a tile at the current tick.
+  const clusterAtTile = (x: number, y: number): TileTarget['cluster'] => {
+    if (!clusters) return undefined;
+    for (const c of clusters) {
+      if (tick < c.tb || (c.tr !== undefined && tick >= c.tr)) continue;
+      for (const r of c.rects) {
+        if (tick < r.tb || (r.tr !== undefined && tick >= r.tr)) continue;
+        if (x >= r.minX && x <= r.maxX && y >= r.minY && y <= r.maxY) {
+          return {
+            id: c.id,
+            recipe: c.recipe ?? c.storedItem ?? '—',
+            machines: c.members?.length ?? 0,
+            kind: c.kind,
+            blocks: c.rects.length,
+          };
+        }
       }
     }
-    // Cluster rects: hovering any rect highlights the whole cluster (all its
-    // disjoint sub-blocks) via the `is-hot` class, and shows a cluster tooltip.
-    const cg = t.closest('[data-cluster-id]');
-    if (cg) {
-      const id = cg.getAttribute('data-cluster-id') ?? '';
-      setHotCluster(cg);
-      tooltipRef.current?.show({ kind: 'cluster', id, label: cg.getAttribute('data-cluster-label') ?? id, sub: cg.getAttribute('data-cluster-sub') ?? '', sx, sy });
-      return;
+    return undefined;
+  };
+
+  // The type-dependent detail line(s) for an entity: recipe for machines,
+  // facing for splitters/inserters, facing + carried items for belts (a flow
+  // segment covers their tile). Empty for entities with none of these.
+  const entityDetails = (en: number, segId: string | undefined, beltDir: number | undefined): DetailRow[] => {
+    const rows: DetailRow[] = [];
+    const rm = recipeByEn.get(en);
+    if (rm) { const r = recipeAt(rm, tick); if (r) rows.push({ label: 'Recipe', value: r }); return rows; }
+    const sp = splitterByEn.get(en);
+    if (sp) { const f = dirLabel(sp.dir); if (f) rows.push({ label: 'Facing', value: f }); return rows; }
+    const ins = inserterByEn.get(en);
+    if (ins) { const f = dirLabel(ins.dir); if (f) rows.push({ label: 'Facing', value: f }); return rows; }
+    if (segId) {
+      const f = dirLabel(beltDir); if (f) rows.push({ label: 'Facing', value: f });
+      const seg = segmentById.get(segId);
+      if (seg) {
+        const items = Array.from(new Set([
+          ...activeItems(seg.contents?.left, tick),
+          ...activeItems(seg.contents?.right, tick),
+        ]));
+        if (items.length) rows.push({ label: 'Carrying', value: items.join(', ') });
+      }
     }
-    setHotCluster(null);
-    if (!(t instanceof SVGUseElement)) { tooltipRef.current?.hide(); return; }
-    const name = t.getAttribute('data-name');
-    const pxStr = t.getAttribute('data-px');
-    const pyStr = t.getAttribute('data-py');
-    const enStr = t.getAttribute('data-en');
-    if (name === null || pxStr === null || pyStr === null) {
-      tooltipRef.current?.hide();
-      return;
+    return rows;
+  };
+
+  // Composite hit-test shared by hover + click. The entity comes from
+  // elementsFromPoint (not e.target) so a cluster rect / flow stroke sitting
+  // on top doesn't steal it; tile + segment + cluster are resolved by tile
+  // from the flow data. Returns the entity (headline) or null for an empty
+  // tile, plus the cluster <g> under the cursor for the hover highlight.
+  const resolveTarget = (clientX: number, clientY: number, rect: DOMRect): { target: TileTarget | null; clusterG: Element | null } => {
+    const v = vbRef.current;
+    if (!v) return { target: null, clusterG: null };
+    let useEl: SVGUseElement | null = null;
+    let clusterG: Element | null = null;
+    for (const el of document.elementsFromPoint(clientX, clientY)) {
+      if (!useEl && el instanceof SVGUseElement && el.getAttribute('data-name') !== null) useEl = el;
+      if (!clusterG) { const g = el.closest('[data-cluster-id]'); if (g) clusterG = g; }
+      if (useEl && clusterG) break;
     }
-    tooltipRef.current?.show({
-      kind: 'entity',
-      name,
-      en: enStr === null ? NaN : parseInt(enStr, 10),
-      px: parseFloat(pxStr),
-      py: parseFloat(pyStr),
-      sx,
-      sy,
-    });
+    if (!useEl) return { target: null, clusterG: null };
+    const { wx, wy } = screenToWorld(rect, v, clientX, clientY);
+    const x = Math.floor(wx), y = Math.floor(wy);
+    const seg = segmentAtTile(x, y);
+    const enStr = useEl.getAttribute('data-en');
+    const en = enStr === null ? NaN : parseInt(enStr, 10);
+    const unStr = useEl.getAttribute('data-un');
+    const tbStr = useEl.getAttribute('data-tb');
+    return {
+      target: {
+        tile: { x, y },
+        entity: {
+          name: useEl.getAttribute('data-name') ?? '',
+          en,
+          un: unStr === null ? undefined : parseInt(unStr, 10),
+          px: parseFloat(useEl.getAttribute('data-px') ?? 'NaN'),
+          py: parseFloat(useEl.getAttribute('data-py') ?? 'NaN'),
+          tb: tbStr === null ? undefined : parseInt(tbStr, 10),
+          details: entityDetails(en, seg?.id, seg?.dir),
+        },
+        segment: seg ? { id: seg.id } : undefined,
+        cluster: clusterAtTile(x, y),
+      },
+      clusterG,
+    };
+  };
+
+  // Hover tooltip — resolves the composite target and shows all of it at the
+  // cursor; hovering a tile in a cluster also highlights that cluster's block.
+  const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (dragRef.current) { tooltipRef.current?.hide(); setHotCluster(null); return; }
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const { target, clusterG } = resolveTarget(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+    setHotCluster(clusterG);
+    if (!target) { tooltipRef.current?.hide(); return; }
+    const wrapRect = wrap.getBoundingClientRect();
+    tooltipRef.current?.show({ ...target, sx: e.clientX - wrapRect.left, sy: e.clientY - wrapRect.top });
   };
   const onMouseLeave = () => { tooltipRef.current?.hide(); setHotCluster(null); };
+
+  // Click-to-select: pin the composite target into the info panel below the
+  // map. A click that concludes a pan (pointerMovedRef) is ignored so dragging
+  // never changes the selection; clicking an empty tile clears it.
+  const onMapClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (pointerMovedRef.current) return;
+    setSelected(resolveTarget(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect()).target);
+  };
   const resetView = () => {
     if (!data) return;
     const [x, y, w, h] = data.viewBox;
@@ -1187,6 +1326,7 @@ export function MapView({
           style={{ display: 'none' }}
           data-name={e.name}
           data-en={e.en}
+          data-un={e.un}
           data-l={e.L}
           data-tb={e.tb}
           data-px={e.px}
@@ -1647,6 +1787,7 @@ export function MapView({
           onPointerCancel={onPointerUp}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
+          onClick={onMapClick}
         >
           <defs>
             {symbols}
@@ -1704,6 +1845,64 @@ export function MapView({
         <div className="run-map-chrome" ref={setChromeEl} />
         <MapTooltip ref={tooltipRef} />
       </div>
+
+      {/* Info panel — opens below the canvas when a tile is clicked.
+          General-purpose target inspector (not QA-only): the tile, the entity
+          on it (the headline), and the segment / cluster the tile belongs to.
+          Deeper per-target detail lands in the placeholder area in a later pass. */}
+      {selected && (
+        <div className="run-map-info">
+          <div className="run-map-info-head">
+            <span className="run-map-info-kind">Tile {selected.tile.x}, {selected.tile.y}</span>
+            <button
+              className="run-map-info-close"
+              onClick={() => setSelected(null)}
+              aria-label="Close info panel"
+            >×</button>
+          </div>
+
+          <div className="run-map-info-title">{selected.entity.name}</div>
+          {selected.entity.un !== undefined && (
+            <div className="run-map-info-row">
+              <span className="k">Unit</span><span className="v">#{selected.entity.un}</span>
+            </div>
+          )}
+          <div className="run-map-info-row">
+            <span className="k">Position</span>
+            <span className="v">x {selected.entity.px.toFixed(1)} · y {selected.entity.py.toFixed(1)}</span>
+          </div>
+          {selected.entity.tb !== undefined && (
+            <div className="run-map-info-row">
+              <span className="k">Built</span><span className="v">{fmtTime(ticksToMin(selected.entity.tb))}</span>
+            </div>
+          )}
+          {selected.entity.details.map((d, i) => (
+            <div key={i} className="run-map-info-row">
+              <span className="k">{d.label}</span><span className="v">{d.value}</span>
+            </div>
+          ))}
+
+          {selected.segment && (
+            <div className="run-map-info-section">
+              <div className="run-map-info-section-label">Belt segment</div>
+              <div className="run-map-info-row"><span className="v">{selected.segment.id}</span></div>
+            </div>
+          )}
+
+          {selected.cluster && (
+            <div className="run-map-info-section">
+              <div className="run-map-info-section-label">Cluster</div>
+              <div className="run-map-info-row"><span className="k">Recipe</span><span className="v">{selected.cluster.recipe}</span></div>
+              <div className="run-map-info-row"><span className="k">Machines</span><span className="v">{selected.cluster.machines}</span></div>
+              <div className="run-map-info-row"><span className="k">ID</span><span className="v">{selected.cluster.id}</span></div>
+            </div>
+          )}
+
+          <div className="run-map-info-placeholder">
+            Detailed inspection for this target will appear here.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

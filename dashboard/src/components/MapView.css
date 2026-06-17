@@ -168,7 +168,38 @@
   width: 100%;
   background: #0c0c0c;            /* COLORS.bgDeep */
   overflow: hidden;
-  /* aspect-ratio set inline from viewBox */
+  /* 'aspect' fit: aspect-ratio set inline from the map's viewBox. */
+}
+/* 'viewport' fit: panel size is driven by the screen, not the map. Height is
+   a fraction of the viewport (bounded so it stays usable on very short/tall
+   screens); width is the 100% above. The map frames a fixed-zoom window into
+   this box (see VIEWPORT_PX_PER_TILE), so the starting zoom is map-independent. */
+.run-map-canvas-wrap.is-viewport {
+  height: clamp(420px, 78vh, 960px);
+}
+
+/* Map page: fit everything in one viewport so no page scroll is needed on a
+   full-size window. The shared .dashboard is a normal scrolling page (the chart
+   dashboard); the .dashboard-map modifier turns it into a fixed-height flex
+   column where the canvas grows to fill whatever the header/controls leave.
+   (On a very short window it falls back to scrolling rather than clipping.) */
+.dashboard-map {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  padding-bottom: 24px;          /* the 64px bottom padding isn't needed here */
+}
+.dashboard-map .run-map-player {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;                 /* let the flex child shrink below its content */
+}
+.dashboard-map .run-map-canvas-wrap.is-viewport {
+  flex: 1;
+  height: auto;                  /* flex drives the height; override the clamp */
+  min-height: 0;
 }
 .run-map-canvas {
   width: 100%;

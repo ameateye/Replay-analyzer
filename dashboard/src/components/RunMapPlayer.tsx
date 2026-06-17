@@ -32,5 +32,5 @@ export function RunMapPlayer({ runName }: { runName: string }) {
     return <div className="run-map-player run-map-error">no map data for {runName}</div>;
   }
   const spritesUrl = `${import.meta.env.BASE_URL}game-data/map-sprites.json`;
-  return <MapView mapUrl={mapUrl} spritesUrl={spritesUrl} flowSegments={flowSegments} clusters={clusters} />;
+  return <MapView mapUrl={mapUrl} spritesUrl={spritesUrl} fitMode="viewport" flowSegments={flowSegments} clusters={clusters} />;
 }

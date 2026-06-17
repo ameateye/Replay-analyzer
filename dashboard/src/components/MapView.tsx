@@ -520,6 +520,22 @@ function screenToWorld(rect: DOMRect, vb: { x: number; y: number; w: number; h: 
   return { wx: vb.x + ix * vb.w, wy: vb.y + iy * vb.h };
 }
 
+// Initial zoom for the 'viewport' fit: a world tile renders at ~this many CSS
+// pixels on load, independent of how large the base is. The panel's pixel size
+// (driven by the screen) then decides how many tiles are visible — so the
+// starting zoom is identical across runs, and the user pans/zooms from there.
+const VIEWPORT_PX_PER_TILE = 8;
+
+// A constant-scale viewBox covering `panelW × panelH` CSS px at
+// VIEWPORT_PX_PER_TILE, centred on world (cx, cy). Matching the viewBox aspect
+// to the panel keeps tiles square and avoids letterbox bars under
+// preserveAspectRatio="xMidYMid meet".
+function viewportVb(panelW: number, panelH: number, cx: number, cy: number) {
+  const w = panelW / VIEWPORT_PX_PER_TILE;
+  const h = panelH / VIEWPORT_PX_PER_TILE;
+  return { x: cx - w / 2, y: cy - h / 2, w, h };
+}
+
 // Context exposing the chrome `<div>` (an absolute-positioned layer over
 // the canvas, in screen coords). Overlay components render into it via
 // React.createPortal — useful for legends, status badges, and any HTML
@@ -658,6 +674,9 @@ export function MapView({
   const [selected, setSelected] = useState<TileTarget | null>(null);
   const tooltipRef = useRef<MapTooltipHandle>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // The map identity the initial 'viewport' framing was last applied to, so we
+  // frame once per loaded run and never yank the user's manual pan/zoom.
+  const framedRef = useRef<MapData | null>(null);
   // DOM refs kept as state (set via callback refs) so effects can
   // re-run when the elements attach. Plain useRef would race the
   // data-load → vb-set → SVG-mount sequence: an effect keyed on
@@ -795,19 +814,41 @@ export function MapView({
   }, [mapUrl, spritesUrl]);
 
   // Reset on data change. Honors initialTick so external shells (e.g.
-  // hub URL ?tick=) can deep-link.
+  // hub URL ?tick=) can deep-link. 'aspect' fit frames the full base extent
+  // (size follows the map); 'viewport' fit frames a fixed-zoom window on the
+  // origin instead — the panel isn't mounted yet on first load, so set a
+  // provisional vb just to mount it (`prev ?? …` leaves an existing view
+  // untouched on later run switches) and let the layout effect below re-frame
+  // it with the measured panel size before paint.
   useEffect(() => {
     if (!data) return;
     setTick(initialTick);
-    const [x, y, w, h] = data.viewBox;
-    setVb({ x, y, w, h });
+    if (fitMode === 'viewport') {
+      setVb(prev => prev ?? { x: -80, y: -50, w: 160, h: 100 });
+    } else {
+      const [x, y, w, h] = data.viewBox;
+      setVb({ x, y, w, h });
+    }
     buildCursor.current = 0;
     removeCursor.current = 0;
     lastRecipeIdx.current.clear();
     lastSplitterIdx.current.clear();
     lastInserterIdx.current.clear();
     lastRoboportIdx.current.clear();
-  }, [data, initialTick]);
+  }, [data, initialTick, fitMode]);
+
+  // 'viewport' fit: once the panel is in the DOM, measure its pixel size and
+  // frame the fixed-zoom view on the origin. Guarded by framedRef (keyed on the
+  // map object) so it runs once per loaded run and never overrides the user's
+  // pan/zoom. useLayoutEffect → corrects the provisional vb before paint.
+  useLayoutEffect(() => {
+    if (fitMode !== 'viewport' || !data || !svgEl) return;
+    if (framedRef.current === data) return;
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (!r || r.width <= 0 || r.height <= 0) return;
+    framedRef.current = data;
+    setVb(viewportVb(r.width, r.height, 0, 0));
+  }, [svgEl, data, fitMode]);
 
   // External focus: when an overlay host wants to "go look at X", it
   // passes a focusBBox; we centre that bbox in the canvas with ~30%
@@ -1300,6 +1341,13 @@ export function MapView({
   };
   const resetView = () => {
     if (!data) return;
+    if (fitMode === 'viewport') {
+      const r = wrapRef.current?.getBoundingClientRect();
+      if (r && r.width > 0 && r.height > 0) {
+        setVb(viewportVb(r.width, r.height, 0, 0));
+        return;
+      }
+    }
     const [x, y, w, h] = data.viewBox;
     setVb({ x, y, w, h });
   };
@@ -1799,7 +1847,11 @@ export function MapView({
         </div>
       )}
 
-      <div className="run-map-canvas-wrap" ref={wrapRef} style={containerStyle}>
+      <div
+        className={'run-map-canvas-wrap' + (fitMode === 'viewport' ? ' is-viewport' : '')}
+        ref={wrapRef}
+        style={containerStyle}
+      >
         {/* viewBox is set imperatively (layout effect + rAF) so pan/zoom
             doesn't re-render this component's ~45K SVG children per frame. */}
         <svg

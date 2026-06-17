@@ -10,7 +10,7 @@ export function MapApp() {
   const [runName, setRunName] = useState<string>(defaultMeta.name);
 
   return (
-    <div className="dashboard">
+    <div className="dashboard dashboard-map">
       <header className="dashboard-header">
         <div>
           <h1>

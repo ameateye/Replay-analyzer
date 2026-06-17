@@ -7,7 +7,7 @@
 // (one per missing item / fluid / non-working status), with the potential
 // capacity drawn as a dashed reference line. The bands are pre-scaled in the
 // data prep so the stack top tracks the potential line during stalls.
-import { useMemo, useState, type RefObject } from 'react';
+import { useMemo, useRef, useState, type RefObject } from 'react';
 import { Group } from '@visx/group';
 import { scaleLinear } from '@visx/scale';
 import { LinePath, AreaClosed } from '@visx/shape';
@@ -18,6 +18,9 @@ import { useGameData } from '../server/GameDataContext';
 import { recipeMeta } from '../server/gameData';
 import { COLORS, FONT, fmtTime } from '../theme';
 import { containerXY, TooltipRow, type TooltipState } from './Tooltip';
+import { ITEM_PALETTE, FLUID_PALETTE, STATUS_COLOR, LOSS_STATUS_ORDER } from '../lib/lossColors';
+import { computeWindowStats } from '../lib/windowStats';
+import { WindowStatsContent } from './WindowStatsContent';
 
 // 'fluid-buffer' is buffer-mode for fluid tanks: same line rendering as
 // 'buffer' but different headline + tooltip wording (tanks, not chests + inv).
@@ -117,17 +120,8 @@ const bisectMinute = bisector<number, number>(m => m).left;
 // the inset slate-gray surface; the line is one notch lighter than the fill.
 const ACTUAL_FILL = '#1e9bbf';
 const ACTUAL_LINE = '#7dd3e8';
-const ITEM_PALETTE = ['#e74634', '#f3934e', '#cf833a', '#fbbb27', '#a23b1c', '#c4690b'];
-const FLUID_PALETTE = ['#5fbff4', '#67e8f9', '#3aa8f0', '#7d5bd1'];
-const STATUS_COLOR: Record<StatusKey, string> = {
-  no_ingredients: '#a8865a',
-  no_fuel:        '#1a1a1a',
-  full_output:    '#fbbb27',
-  low_power:      '#b14df5',
-  depleted:       '#6b8e23',
-  unknown:        '#a09c97',
-};
-const LOSS_STATUS_ORDER: StatusKey[] = ['no_ingredients', 'no_fuel', 'full_output', 'low_power', 'depleted', 'unknown'];
+// Loss-band palettes + status colors/order are shared with the window readout
+// (see lib/lossColors.ts) so the stack and the table never drift.
 
 export function ProductionRow({
   recipe,
@@ -164,6 +158,31 @@ export function ProductionRow({
   );
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
+  // Drag-to-brush a time window, self-contained per chart.
+  // `sel` is the brushed window in minutes. While it's set, the tooltip shows
+  // the window aggregate (produced / missed / by-reason) instead of the
+  // point-in-time value, and the in-chart band marks the range. `draggingRef`
+  // marks an in-progress brush (driven by window listeners, see handleDown).
+  const [sel, setSel] = useState<{ m0: number; m1: number } | null>(null);
+  const draggingRef = useRef(false);
+  // Brushable on the production-bearing charts. `rate` and `cum` rows both
+  // come from the same projection (actual / potential / per-reason losses), so
+  // a window readout is meaningful on either. Stock/count rows (buffer,
+  // fluid-buffer, count, twoLine) carry no produced/loss series.
+  const brushEnabled = mode === 'rate' || mode === 'cum';
+  const periodMin = minutes.length > 1 ? minutes[1] - minutes[0] : 300 / 3600;
+
+  const windowStats = useMemo(
+    () => (sel ? computeWindowStats(recipe, minutes, periodMin, sel) : null),
+    [sel, recipe, minutes, periodMin],
+  );
+
+  const minuteFromX = (clientX: number, rect: DOMRect): number => {
+    const fracX = rect.width > 0 ? Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) : 0;
+    const [d0, d1] = xScale.domain();
+    return d0 + fracX * (d1 - d0);
+  };
+
   const isLineMode = mode === 'buffer' || mode === 'fluid-buffer' || mode === 'count' || mode === 'twoLine';
   const showLimit = isLineMode && mode !== 'count' && mode !== 'twoLine'
     && recipe.showBufferLimit && recipe.bufferLimit != null;
@@ -186,17 +205,68 @@ export function ProductionRow({
     [peak, rowH],
   );
 
+  // Start a brush. Tracks the drag on window listeners (not the rect) so a
+  // release outside the chart still finishes cleanly. The plot rect is
+  // captured once at mouse-down — charts don't reflow mid-drag.
+  const handleDown = (e: React.MouseEvent<SVGRectElement>) => {
+    if (!brushEnabled) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const startMin = minuteFromX(e.clientX, rect);
+    let moved = false;
+    draggingRef.current = true;
+    setHoverIdx(null);
+
+    const onMove = (ev: MouseEvent) => {
+      moved = true;
+      const m = minuteFromX(ev.clientX, rect);
+      const win = { m0: Math.min(startMin, m), m1: Math.max(startMin, m) };
+      setSel(win);
+      // The tooltip shows the window aggregate live as the range grows.
+      const stats = computeWindowStats(recipe, minutes, periodMin, win);
+      const { x, y } = containerXY(ev, containerRef);
+      setTooltip({
+        x,
+        y,
+        placement: 'top',
+        content: <WindowStatsContent stats={stats} label={meta.label} color={meta.color} />,
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      draggingRef.current = false;
+      // Click without a drag clears the window (tooltip reverts to point-in-time
+      // on the next hover); a real drag leaves `sel` + the window tooltip up.
+      if (!moved) { setSel(null); setTooltip(null); }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   const handleMove = (e: React.MouseEvent<SVGRectElement>) => {
+    if (draggingRef.current) return; // brushing — window listeners own the interaction
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0) return;
-    const fracX = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    const [d0, d1] = xScale.domain();
-    const minute = d0 + fracX * (d1 - d0);
+    const { x, y } = containerXY(e, containerRef);
+
+    // While a window is selected the tooltip shows that window's aggregate,
+    // replacing the point-in-time readout (no per-tick crosshair).
+    if (sel) {
+      setHoverIdx(null);
+      setTooltip({
+        x,
+        y,
+        placement: 'top',
+        content: <WindowStatsContent stats={windowStats} label={meta.label} color={meta.color} />,
+      });
+      return;
+    }
+
+    const minute = minuteFromX(e.clientX, rect);
     const i = clampIdx(bisectMinute(minutes, minute), minutes.length);
     const idx = nearestMinute(minutes, i, minute);
     setHoverIdx(idx);
-
-    const { x, y } = containerXY(e, containerRef);
     setTooltip({
       x,
       y,
@@ -206,6 +276,7 @@ export function ProductionRow({
   };
 
   const handleLeave = () => {
+    if (draggingRef.current) return;
     setHoverIdx(null);
     setTooltip(null);
   };
@@ -307,6 +378,9 @@ export function ProductionRow({
           ? renderTwoLineMode(recipe, meta.color, minutes, xScale, yScale)
           : renderLineMode(recipe, meta.color, minutes, xScale, yScale, mode === 'cum' ? 'cum' : 'buffer')}
 
+        {/* Brushed time-window band. */}
+        {sel && renderSelectionBand(sel, xScale, innerW, rowH)}
+
         {/* Compact y-axis tick: max value at top */}
         <text
           x={-6}
@@ -345,11 +419,34 @@ export function ProductionRow({
           width={innerW}
           height={rowH}
           fill="transparent"
+          style={brushEnabled ? { cursor: 'col-resize' } : undefined}
+          onMouseDown={handleDown}
           onMouseMove={handleMove}
           onMouseLeave={handleLeave}
         />
       </Group>
     </>
+  );
+}
+
+// Translucent vertical band marking the brushed window, clamped to the plot.
+function renderSelectionBand(
+  sel: { m0: number; m1: number },
+  xScale: ScaleLinear<number, number>,
+  innerW: number,
+  rowH: number,
+) {
+  const [d0, d1] = xScale.domain();
+  const lo = Math.max(d0, Math.min(sel.m0, sel.m1));
+  const hi = Math.min(d1, Math.max(sel.m0, sel.m1));
+  const a = Math.max(0, Math.min(innerW, xScale(lo)));
+  const b = Math.max(0, Math.min(innerW, xScale(hi)));
+  return (
+    <g pointerEvents="none">
+      <rect x={a} y={0} width={Math.max(0, b - a)} height={rowH} fill={COLORS.textStrong} fillOpacity={0.12} />
+      <line x1={a} x2={a} y1={0} y2={rowH} stroke={COLORS.textStrong} strokeWidth={1} strokeOpacity={0.7} />
+      <line x1={b} x2={b} y1={0} y2={rowH} stroke={COLORS.textStrong} strokeWidth={1} strokeOpacity={0.7} />
+    </g>
   );
 }
 

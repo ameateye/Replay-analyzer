@@ -579,12 +579,23 @@ type DetailRow = { label: string; value: string };
 export type TileTarget = {
   tile: { x: number; y: number };
   entity: { name: string; en: number; un?: number; px: number; py: number; tb?: number; details: DetailRow[] };
-  segment?: { id: string };
+  segment?: { id: string; left?: string[]; right?: string[] };
   cluster?: { id: string; recipe: string; machines: number; kind: string; blocks: number };
 };
 type TooltipState = TileTarget & { sx: number; sy: number };
 
 export type MapTooltipHandle = { show: (t: TooltipState) => void; hide: () => void };
+
+// Belt contents for the hover: collapse to one value when both lanes carry the
+// same set, else split as "L:… R:…". An empty lane reads "empty"; a belt that
+// carries nothing at all reads "empty" too.
+function laneContentsLabel(left: string[] | undefined, right: string[] | undefined): string {
+  const l = (left ?? []).join(', ');
+  const r = (right ?? []).join(', ');
+  if (!l && !r) return 'empty';
+  if (l === r) return l;
+  return `L:${l || 'empty'} R:${r || 'empty'}`;
+}
 
 // The hover tooltip owns its own state and is driven imperatively from
 // MapView's mousemove handler. Isolating it here means moving the cursor
@@ -596,19 +607,26 @@ const MapTooltip = forwardRef<MapTooltipHandle>(function MapTooltip(_props, ref)
   if (!tip) return null;
   return (
     <div className="run-map-tooltip" style={{ left: tip.sx, top: tip.sy }}>
-      <div className="run-map-tooltip-name">{tip.entity.name}</div>
-      <div className="run-map-tooltip-coords">
-        tile {tip.tile.x}, {tip.tile.y}
-        {tip.entity.un !== undefined && <> · unit #{tip.entity.un}</>}
+      <div className="run-map-tooltip-name">
+        {tip.entity.name}
+        {tip.entity.un !== undefined && <span className="run-map-tooltip-unit"> - #{tip.entity.un}</span>}
       </div>
-      {tip.entity.details.map((d, i) => (
-        <div key={i} className="run-map-tooltip-unit">{d.label}: {d.value}</div>
-      ))}
+      {tip.segment ? (
+        <>
+          <div className="run-map-tooltip-unit">Segment - {tip.segment.id}</div>
+          <div className="run-map-tooltip-unit">Contents - {laneContentsLabel(tip.segment.left, tip.segment.right)}</div>
+        </>
+      ) : (
+        tip.entity.details.map((d, i) => (
+          <div key={i} className="run-map-tooltip-unit">{d.label} - {d.value}</div>
+        ))
+      )}
       {tip.cluster && (
         <div className="run-map-tooltip-unit">
-          cluster {tip.cluster.id} · {tip.cluster.recipe} · {tip.cluster.machines} machines
+          Cluster - {tip.cluster.id} · {tip.cluster.recipe} · {tip.cluster.machines} machines
         </div>
       )}
+      <div className="run-map-tooltip-coords">({tip.tile.x}, {tip.tile.y})</div>
     </div>
   );
 });
@@ -1229,6 +1247,7 @@ export function MapView({
     const { wx, wy } = screenToWorld(rect, v, clientX, clientY);
     const x = Math.floor(wx), y = Math.floor(wy);
     const seg = segmentAtTile(x, y);
+    const segData = seg ? segmentById.get(seg.id) : undefined;
     const enStr = useEl.getAttribute('data-en');
     const en = enStr === null ? NaN : parseInt(enStr, 10);
     const unStr = useEl.getAttribute('data-un');
@@ -1245,7 +1264,13 @@ export function MapView({
           tb: tbStr === null ? undefined : parseInt(tbStr, 10),
           details: entityDetails(en, seg?.id, seg?.dir),
         },
-        segment: seg ? { id: seg.id } : undefined,
+        segment: seg
+          ? {
+              id: seg.id,
+              left: segData ? activeItems(segData.contents?.left, tick) : undefined,
+              right: segData ? activeItems(segData.contents?.right, tick) : undefined,
+            }
+          : undefined,
         cluster: clusterAtTile(x, y),
       },
       clusterG,

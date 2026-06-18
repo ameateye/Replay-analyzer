@@ -42,28 +42,35 @@ function round4(n) { return Math.round(n * 1e4) / 1e4; }
 
 // ===== BSEntity record synthesis =============================================
 //
-// Render-relevant mutation keys: a mutation that doesn't touch any of these
-// is not a new BSEntity record (only neighbour-state, captured independently
-// by the sidecar's populateWorldMap loop on the *neighbour's* event).
-//
-// Belt-graph mutations (beltInputs / beltOutputs / undergroundPair) are
-// excluded: the sidecar reconstructs neighbour topology from actually-placed
-// entities, so the entity's own belt-graph delta is redundant input.
-const RENDER_RELEVANT_KEYS = [
+// A mutation produces a fresh BSEntity record (a re-render at that tick) when it
+// touches a render-relevant key. Two flavours:
+//   • STATE keys (direction / name / belt-to-ground / splitter config) — change
+//     the record's own fields, which the sidecar renders directly.
+//   • TRIGGER keys (belt-graph: beltInputs / beltOutputs / undergroundPair) — carry
+//     no field the sidecar reads (it reconstructs adjacency from the placed
+//     entities itself), but the entity's SPRITE depends on that adjacency, so the
+//     delta must still force a re-render. Omitting them is why a feeder belt built
+//     BEFORE the corner it later feeds kept a stale dead-end end-cap: the collector
+//     recorded the new beltOutputs, but map-prep dropped it, so the sidecar was
+//     never asked to redraw the feeder against the now-present corner.
+const RENDER_STATE_KEYS = [
   'direction',
   'name',
   'beltToGroundType',
   'splitterInputPriority', 'splitterOutputPriority', 'splitterFilter',
 ];
+const RERENDER_TRIGGER_KEYS = ['beltInputs', 'beltOutputs', 'undergroundPair'];
 
 function mutationIsRenderRelevant(m) {
-  for (const k of RENDER_RELEVANT_KEYS) if (m[k] !== undefined) return true;
+  for (const k of RENDER_STATE_KEYS) if (m[k] !== undefined) return true;
+  for (const k of RERENDER_TRIGGER_KEYS) if (m[k] !== undefined) return true;
   return false;
 }
 
+// Only STATE keys flow into the record; trigger keys just forced the re-render.
 function applyMutation(state, m) {
   const next = { ...state };
-  for (const k of RENDER_RELEVANT_KEYS) if (m[k] !== undefined) next[k] = m[k];
+  for (const k of RENDER_STATE_KEYS) if (m[k] !== undefined) next[k] = m[k];
   return next;
 }
 

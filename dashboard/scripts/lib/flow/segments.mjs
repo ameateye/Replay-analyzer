@@ -94,7 +94,16 @@ function join(state, seg, u, tick) {        // u enters seg → open its tile oc
     if (last && last.tick === tick) { last.seg = seg.id; last.seq = ++state.seq; }
     else tl.push({ seg: seg.id, tick, seq: ++state.seq });
     const xy = tilesFor(b);
-    seg.tiles.set(u, { xy, tb: tick });
+    // A unit can leave and REJOIN the same segment over disjoint windows (churn
+    // from transient one-sided belt edges), so tile occupancy is a LIST of
+    // intervals — append here, never overwrite, or the earlier interval is lost
+    // and the tile reads as unclassified for that whole window. On a same-settle
+    // re-entry (last interval still open) refresh its geometry instead of pushing.
+    let intervals = seg.tiles.get(u);
+    if (!intervals) { intervals = []; seg.tiles.set(u, intervals); }
+    const lastIv = intervals[intervals.length - 1];
+    if (lastIv && lastIv.tr == null) lastIv.xy = xy;
+    else intervals.push({ xy, tb: tick });
     // Belt tiles join the shared tile index here so the finalize replay
     // resolves belts (segments owns belt tiles).
     for (const t of xy) setEntityTile(state, t.x, t.y, { unit: u, category: 'belt', name: b.name });
@@ -104,9 +113,10 @@ function join(state, seg, u, tick) {        // u enters seg → open its tile oc
 function leave(state, seg, u, tick) {       // u exits seg → close occupancy (entry kept for geometry)
   seg.members.delete(u);
   if (state.segOf.get(u) === seg.id) state.segOf.delete(u);
-  const t = seg.tiles.get(u);
-  if (t) {
-    if (t.tr == null) t.tr = tick;
+  const intervals = seg.tiles.get(u);
+  const t = intervals && intervals[intervals.length - 1];
+  if (t && t.tr == null) {                                          // close the open interval
+    t.tr = tick;
     for (const xy of t.xy) clearEntityTile(state, xy.x, xy.y, u);   // drop belt tiles from the shared index
   }
 }
@@ -297,7 +307,7 @@ export function finalize(state, _durationTick) {
 function toRecord(s) {
   const tileLocations = [];
   let open = 0;
-  for (const { xy, tb, tr } of s.tiles.values()) for (const t of xy) {
+  for (const intervals of s.tiles.values()) for (const { xy, tb, tr } of intervals) for (const t of xy) {
     const e = { x: t.x, y: t.y, direction: t.direction, tb };
     if (tr != null) e.tr = tr; else open++;
     tileLocations.push(e);

@@ -339,9 +339,12 @@ export function finalize(state) {
 //   • static source (machine recipe output, miner resource) → `itemWindows` + `dst`
 //   • dynamic source (a belt's lanes, a buffer's outputs)   → `src` + `dst` (+ filter)
 //   • drop into a machine (FEED)                            → nothing (dead end)
-// `src` is 'belt' (its segments are e.from.segs) or { buffer: unit }; `dst` is
+// `src` is 'belt' (its segments are e.from.segs) or { buffers: [unit,…] }; `dst` is
 // { belt: side } (segments e.to.segs; side may be 'both' for a collinear belt merge)
-// or { buffer: unit }. contents.mjs seeds the statics and propagates the dynamics.
+// or { buffers: [unit,…] }. A buffer endpoint lists EVERY chest that occupied the
+// tile (a same-tile upgrade swaps the unit), the per-chest life splitting the window
+// downstream — the buffer analogue of resolveDrainWindows over machine occupants.
+// contents.mjs seeds the statics and propagates the dynamics.
 function annotateContents(state, e) {
   if (e.minerUnit != null)    return resolveMinerEdge(state, e);
   if (e.inserterUnit != null) return resolveInserterEdge(state, e);
@@ -360,8 +363,8 @@ function resolveInserterEdge(state, e) {
   const filter = filterSpec(liveRec(state.inserters, e.inserterUnit));
   if (filter) e.transferFilter = filter;
   if (e.from.units.some(u => u.category === 'belt')) { e.src = 'belt'; return; }   // dynamic: belt lanes
-  const bu = bufferUnitOf(e.from);
-  if (bu != null) e.src = { buffer: bu };                                          // dynamic: buffer outputs
+  const bufs = bufferUnitsOf(e.from);
+  if (bufs.length) e.src = { buffers: bufs };                                      // dynamic: buffer outputs
 }
 
 // Miner → its drop: the drill's mined resource rides the drop for the edge's whole
@@ -397,15 +400,19 @@ function targetOf(ep) {
   if (ep.units.some(u => u.category === 'belt')) {
     return ep.side === 'left' || ep.side === 'right' ? { belt: ep.side } : null;
   }
-  const bu = bufferUnitOf(ep);
-  return bu != null ? { buffer: bu } : null;
+  const bufs = bufferUnitsOf(ep);
+  return bufs.length ? { buffers: bufs } : null;
 }
 
-// The buffer unit on an endpoint, or null. A tile holds one entity, so it's a single
-// lookup, not a set (`.find` over the timeline tolerates a same-tile chest replace).
-function bufferUnitOf(ep) {
-  const u = ep.units.find(u => u.category === 'buffer');
-  return u ? u.unit : null;
+// Every distinct buffer unit that occupied an endpoint tile over the edge's life,
+// in occupancy order. A tile holds one entity at a time, but a same-tile chest
+// REPLACE (iron-chest upgraded to passive-provider, say) lands a second buffer on
+// the timeline; enumerating all of them — as resolveDrainWindows does over machine
+// occupants — lets contents follow the swap instead of pinning to the first chest.
+function bufferUnitsOf(ep) {
+  const seen = new Set(), out = [];
+  for (const u of ep.units) if (u.category === 'buffer' && !seen.has(u.unit)) { seen.add(u.unit); out.push(u.unit); }
+  return out;
 }
 
 // Inserter filter as a content gate (which items it will move), or null when it

@@ -4,10 +4,12 @@
 // NOT touch the topology; it layers item identity onto it. edges.mjs has already
 // resolved each edge to one of two item shapes, on a source→target model:
 //   - STATIC source (machine recipe / miner resource): `itemWindows` (the items) +
-//     `dst` ({ belt: side } or { buffer: unit }) — a one-shot seed of the target;
+//     `dst` ({ belt: side } or { buffers: [unit,…] }) — a one-shot seed of the target;
 //   - DYNAMIC source (a belt's lanes / a buffer's outputs): `src` ('belt' → segments
-//     e.from.segs, or { buffer: unit }) + `dst` (+ inserter `transferFilter`) — a
-//     propagation edge whose item is whatever the source node carries.
+//     e.from.segs, or { buffers: [unit,…] }) + `dst` (+ inserter `transferFilter`) — a
+//     propagation edge whose item is whatever the source node carries. A buffer
+//     endpoint lists every chest that occupied its tile (same-tile upgrade swaps the
+//     unit); each chest's own life clips its sub-window, so contents follow the swap.
 // A belt's lane is { left, right }; a buffer is a single pool — both are nodes here.
 //
 // SEED belt lanes / buffer pools from the static `itemWindows`, and each buffer's
@@ -94,12 +96,14 @@ function seedStatic(edges, lanes, bufNodes) {
           const lane = lanes.get(sv.seg);
           if (lane) insertInterval(lane[e.dst.belt], w.item, iv[0], iv[1]);
         }
-      } else if (e.dst.buffer != null) {
-        const node = bufNodes.get(bKey(e.dst.buffer));
-        if (!node) continue;
-        const iv = clip([w.tb, w.tr ?? null], [node.tb, node.tr]);
-        if (!iv) continue;
-        insertInterval(node.pool, w.item, iv[0], iv[1]);
+      } else if (e.dst.buffers) {
+        for (const bu of e.dst.buffers) {        // each chest that held the drop tile
+          const node = bufNodes.get(bKey(bu));
+          if (!node) continue;
+          const iv = clip([w.tb, w.tr ?? null], [node.tb, node.tr]);
+          if (!iv) continue;
+          insertInterval(node.pool, w.item, iv[0], iv[1]);
+        }
       }
     }
   }
@@ -131,8 +135,9 @@ function seedStock(node, item, series, durationTick) {
 // ── propagation graph ────────────────────────────────────────────
 // Each dynamic-source edge (`src` + `dst`) becomes per-window transfers between two
 // nodes, keyed numeric (belt segment) or `B<unit>` (buffer). `src` is 'belt' (walk its
-// segment timeline e.from.segs) or { buffer }; `dst` is { belt: side } (walk e.to.segs)
-// or { buffer }. A transfer is tagged with its mode, the lane side (belt targets), the
+// segment timeline e.from.segs) or { buffers: [unit,…] }; `dst` is { belt: side } (walk
+// e.to.segs) or { buffers: [unit,…] } — one transfer per chest, each clipped to its own
+// life. A transfer is tagged with its mode, the lane side (belt targets), the
 // CONSUMER tile (belt sources, for splitter output-side resolution — a splitter's own
 // tile is shared by both outputs, so only the consumer's position reveals which half
 // this edge leaves), and an optional inserter filter.
@@ -173,29 +178,36 @@ function buildTransfers(edges, bufNodes) {
             const mode = side === 'both' ? 'both' : 'side';
             add(fv.seg, tv.seg, { mode, side: side === 'both' ? null : side, outTile, filter, tb: iv[0], tr: iv[1] });
           }
-        } else if (e.dst.buffer != null) {      // → buffer
-          const node = bufNodes.get(bKey(e.dst.buffer));
-          if (!node) continue;
-          const iv = clip(life, [fv.tb, fv.tr ?? null], [node.tb, node.tr]);
-          if (!iv) continue;
-          add(fv.seg, bKey(e.dst.buffer), { mode: 'buf-in', outTile, filter, tb: iv[0], tr: iv[1] });
+        } else if (e.dst.buffers) {             // → buffer(s): each chest that held the drop tile
+          for (const bu of e.dst.buffers) {
+            const node = bufNodes.get(bKey(bu));
+            if (!node) continue;
+            const iv = clip(life, [fv.tb, fv.tr ?? null], [node.tb, node.tr]);
+            if (!iv) continue;
+            add(fv.seg, bKey(bu), { mode: 'buf-in', outTile, filter, tb: iv[0], tr: iv[1] });
+          }
         }
       }
-    } else if (e.src.buffer != null) {          // buffer source
-      const sNode = bufNodes.get(bKey(e.src.buffer));
-      if (!sNode) continue;
-      if (e.dst.belt === 'left' || e.dst.belt === 'right') {   // → belt drop lane
-        for (const tv of e.to.segs ?? []) {
-          const iv = clip(life, [sNode.tb, sNode.tr], [tv.tb, tv.tr ?? null]);
-          if (!iv) continue;
-          add(bKey(e.src.buffer), tv.seg, { mode: 'buf-out', side: e.dst.belt, filter, tb: iv[0], tr: iv[1] });
+    } else if (e.src.buffers) {                 // buffer source: each chest, clipped to its own life
+      for (const su of e.src.buffers) {
+        const sNode = bufNodes.get(bKey(su));
+        if (!sNode) continue;
+        if (e.dst.belt === 'left' || e.dst.belt === 'right') {   // → belt drop lane
+          for (const tv of e.to.segs ?? []) {
+            const iv = clip(life, [sNode.tb, sNode.tr], [tv.tb, tv.tr ?? null]);
+            if (!iv) continue;
+            add(bKey(su), tv.seg, { mode: 'buf-out', side: e.dst.belt, filter, tb: iv[0], tr: iv[1] });
+          }
+        } else if (e.dst.buffers) {              // → buffer(s)
+          for (const du of e.dst.buffers) {
+            if (du === su) continue;
+            const dNode = bufNodes.get(bKey(du));
+            if (!dNode) continue;
+            const iv = clip(life, [sNode.tb, sNode.tr], [dNode.tb, dNode.tr]);
+            if (!iv) continue;
+            add(bKey(su), bKey(du), { mode: 'buf2buf', filter, tb: iv[0], tr: iv[1] });
+          }
         }
-      } else if (e.dst.buffer != null && e.dst.buffer !== e.src.buffer) {   // → buffer
-        const dNode = bufNodes.get(bKey(e.dst.buffer));
-        if (!dNode) continue;
-        const iv = clip(life, [sNode.tb, sNode.tr], [dNode.tb, dNode.tr]);
-        if (!iv) continue;
-        add(bKey(e.src.buffer), bKey(e.dst.buffer), { mode: 'buf2buf', filter, tb: iv[0], tr: iv[1] });
       }
     }
   }

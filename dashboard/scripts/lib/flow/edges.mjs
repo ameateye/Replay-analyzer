@@ -34,20 +34,31 @@ const PROTO = JSON.parse(
 const RECIPE_OVERRIDE = PROTO.recipeOutputOverride;          // recipe → item (mismatched-name recipes)
 const FLUID_ONLY      = new Set(PROTO.fluidOnlyRecipes);     // recipes whose output is a fluid → no belt item
 
-// Which side of a vector (dx,dy) relative to facing `dir`. Collinear → 'right'.
+// Which side of a vector (dx,dy) relative to facing `dir`: 'left' / 'right' when the
+// perpendicular (across) component dominates, else 'center' — the vector lies on the
+// facing axis (collinear), so there is no near side. Callers resolve the collinear case.
 function sideAlong(dir, dx, dy) {
   const f = DV[dir], l = DV[LEFT[dir]];
-  if (!f) return 'right';
+  if (!f) return 'center';
   const across = dx * l.x + dy * l.y, along = dx * f.x + dy * f.y;
-  return Math.abs(across) > Math.abs(along) ? (across > 0 ? 'left' : 'right') : 'right';
+  if (Math.abs(across) > Math.abs(along)) return across > 0 ? 'left' : 'right';
+  return 'center';
 }
 
-// Belt lane the owner at `ownerLoc` touches, for a belt facing `dir`. mode
-// 'drop' = inserter drop (far lane → flip); 'pickup'/'miner' = near lane.
+// Belt lane the owner at `ownerLoc` touches, for a belt facing `dir`. A perpendicular
+// owner resolves to a near side; an INLINE/collinear owner (drop on the belt's centre
+// line) resolves to 'center'. mode 'drop' = inserter drop: perpendicular → FAR lane
+// (flip near→far); collinear → the belt's RIGHT lane (Factorio's centre-line
+// tie-breaker — verified vs. Wube dev + wiki). 'pickup'/'miner' = near lane; a
+// collinear pickup defaults to 'right'.
 function resolveSideDir(dir, beltTile, ownerLoc, mode) {
   const c = tileCenter(beltTile);
   const s = sideAlong(dir, ownerLoc.x - c.x, ownerLoc.y - c.y);
-  return mode === 'drop' ? (s === 'left' ? 'right' : 'left') : s;
+  if (mode === 'drop') {
+    if (s === 'center') return 'right';
+    return s === 'left' ? 'right' : 'left';
+  }
+  return s === 'center' ? 'right' : s;
 }
 
 // Which CONSUMER lane a belt→belt hand-off feeds, from the two belts'
@@ -60,7 +71,8 @@ function beltToBeltSideAt(f, c, seq) {
   if (fd === cd) return 'both';
   const v = DV[fd];
   if (!v) return 'right';
-  return sideAlong(cd, -v.x, -v.y);
+  const s = sideAlong(cd, -v.x, -v.y);   // ⟂ feeder → a real side; 'center' n/a here, default right
+  return s === 'center' ? 'right' : s;
 }
 
 // ── timeline reads ────────────────────────────────────────────

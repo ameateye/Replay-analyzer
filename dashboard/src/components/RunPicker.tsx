@@ -10,10 +10,13 @@ function runTimeSeconds(name: string): number {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
-// Sorted once at module load — the manifest is static for the session.
-const sortedMetas: RunMeta[] = [...runMetas].sort(
-  (a, b) => runTimeSeconds(a.name) - runTimeSeconds(b.name),
-);
+// Sorted at render — runMetas is populated by loadManifest() before the app
+// mounts, so reading it here (not at module load) reflects the resolved list.
+function sortedRunMetas(): RunMeta[] {
+  return [...runMetas].sort(
+    (a, b) => runTimeSeconds(a.name) - runTimeSeconds(b.name),
+  );
+}
 
 type Props = {
   value: string;
@@ -44,6 +47,7 @@ export function RunPicker({ value, onChange }: Props) {
   }, [open]);
 
   if (runMetas.length <= 1) return null;
+  const sortedMetas = sortedRunMetas();
 
   return (
     <div className={open ? 'run-picker run-picker--open' : 'run-picker'} ref={ref}>

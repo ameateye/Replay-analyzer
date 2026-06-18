@@ -1,0 +1,11 @@
+{
+  "sources": [
+    { "id": "bundled", "type": "bundled" },
+    {
+      "id": "r2",
+      "type": "remote",
+      "manifestUrl": "https://pub-5b67e8548b6d4ab1a88ab6b9c30b6f9b.r2.dev/runs-manifest.json",
+      "bucket": "replay-analyzer-data"
+    }
+  ]
+}

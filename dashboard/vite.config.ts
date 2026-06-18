@@ -9,6 +9,7 @@ const GAME_DATA_DIR = path.resolve(__dirname, '..', 'game-data');
 const BUILT_DATA_DIR = path.resolve(__dirname, '..', 'built-data');
 const PUBLIC_DATA_DIR = path.resolve(__dirname, 'public', 'data');
 const MANIFEST_PATH = path.resolve(__dirname, 'src', 'data', 'runs-manifest.json');
+const SOURCES_PATH = path.resolve(__dirname, 'src', 'data', 'sources.json');
 
 // Serve sibling ../game-data/*.json at /game-data/* so the React app sees a
 // single "server" endpoint for shared, cross-run data. In dev: middleware
@@ -53,13 +54,61 @@ function gameDataServer(): Plugin {
   };
 }
 
-// Dev-only proxy: per-run JSONs are normally hosted externally (R2) per the
-// manifest, but during local development we prefer to read from a fresh
+// Resolve a run's external URLs in dev for the 302 fallback below. The
+// maintainer's committed manifest is empty (runs live on R2), so pull the
+// approved remote sources' manifests — cached for the dev server's lifetime —
+// and merge the bundled manifest for forks. Mirrors src/data/index.ts.
+type DevMeta = { runUrl: string; mapUrl: string };
+let remoteMetaCache: Promise<Map<string, DevMeta>> | null = null;
+function resolveRunMetas(): Promise<Map<string, DevMeta>> {
+  if (remoteMetaCache) return remoteMetaCache;
+  remoteMetaCache = (async () => {
+    const map = new Map<string, DevMeta>();
+    const add = (runs: any[]) => {
+      for (const r of runs ?? []) {
+        if (r?.name && !map.has(r.name)) map.set(r.name, { runUrl: r.runUrl, mapUrl: r.mapUrl });
+      }
+    };
+    try {
+      const sources = JSON.parse(fs.readFileSync(SOURCES_PATH, 'utf8')).sources ?? [];
+      for (const s of sources) {
+        if (s.type !== 'remote' || typeof s.manifestUrl !== 'string') continue;
+        try {
+          const res = await fetch(s.manifestUrl);
+          if (res.ok) add(((await res.json()) as any).runs);
+        } catch { /* unreachable source: skip */ }
+      }
+    } catch { /* no sources.json: skip */ }
+    try { add(JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')).runs); } catch { /* no bundled manifest */ }
+    return map;
+  })();
+  return remoteMetaCache;
+}
+
+// Dev-only run list of everything in built-data/, so a freshly-built run is
+// previewable in the picker before it's uploaded to a source. The URLs are
+// relative placeholders — the loader routes data through /local-data/ in dev
+// regardless (PREFER_LOCAL), so they exist only to satisfy the RunMeta shape.
+function builtDataIndex(): { runs: { name: string; runUrl: string; mapUrl: string }[] } {
+  const runs: { name: string; runUrl: string; mapUrl: string }[] = [];
+  if (fs.existsSync(BUILT_DATA_DIR)) {
+    for (const f of fs.readdirSync(BUILT_DATA_DIR)) {
+      if (f.endsWith('.map.json') || !f.endsWith('.json')) continue;
+      const name = f.slice(0, -'.json'.length);
+      runs.push({ name, runUrl: `local-data/${name}.json`, mapUrl: `local-data/${name}.map.json` });
+    }
+  }
+  return { runs };
+}
+
+// Dev-only proxy: per-run JSONs are normally hosted externally (R2) per a
+// source manifest, but during local development we prefer to read from a fresh
 // `built-data/` (or `dashboard/public/data/` for install:local'd runs) so a
-// rebuild is reflected immediately and there's no need to publish. The
-// loader fetches `/local-data/<run>.json` in dev; this middleware decides
-// between local file or a 302 to the manifest URL. Override with
-// `VITE_USE_REMOTE_DATA=1` on the loader side to bypass entirely.
+// rebuild is reflected immediately and there's no need to publish. The loader
+// fetches `/local-data/<run>.json` in dev; this middleware decides between
+// local file or a 302 to the source URL. It also serves `/local-data/_index`,
+// the dev run list of built-data/. Override with `VITE_USE_REMOTE_DATA=1` on
+// the loader side to bypass entirely.
 function localDataServer(): Plugin {
   return {
     name: 'serve-local-data',
@@ -68,6 +117,11 @@ function localDataServer(): Plugin {
       server.middlewares.use('/local-data', (req, res, next) => {
         if (!req.url) return next();
         const fileName = decodeURIComponent(req.url.split('?')[0]).replace(/^\//, '');
+        if (fileName === '_index') {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Cache-Control', 'no-cache');
+          return res.end(JSON.stringify(builtDataIndex()));
+        }
         if (!fileName.endsWith('.json') || fileName.includes('..') ||
             fileName.includes('/') || fileName.includes('\\')) {
           res.statusCode = 404;
@@ -91,22 +145,17 @@ function localDataServer(): Plugin {
         const baseName = isMap
           ? fileName.slice(0, -'.map.json'.length)
           : fileName.slice(0, -'.json'.length);
-        try {
-          const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
-          const entry = manifest.runs?.find((r: any) => r.name === baseName);
-          if (entry) {
-            const target = isMap ? entry.mapUrl : entry.runUrl;
-            if (typeof target === 'string' && /^https?:\/\//.test(target)) {
-              res.statusCode = 302;
-              res.setHeader('Location', target);
-              return res.end();
-            }
+        resolveRunMetas().then(metas => {
+          const entry = metas.get(baseName);
+          const target = entry && (isMap ? entry.mapUrl : entry.runUrl);
+          if (typeof target === 'string' && /^https?:\/\//.test(target)) {
+            res.statusCode = 302;
+            res.setHeader('Location', target);
+            return res.end();
           }
-        } catch {
-          // fall through to 404
-        }
-        res.statusCode = 404;
-        res.end();
+          res.statusCode = 404;
+          res.end();
+        }).catch(() => { res.statusCode = 404; res.end(); });
       });
     },
   };

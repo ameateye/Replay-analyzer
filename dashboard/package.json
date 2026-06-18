@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "data": "node scripts/build-run-data.mjs",
+    "install:r2": "node scripts/install-run.mjs r2",
     "install:local": "node scripts/install-run.mjs local",
     "install:url": "node scripts/install-run.mjs url",
     "test": "vitest run",

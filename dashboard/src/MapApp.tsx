@@ -7,7 +7,7 @@ import { defaultMeta } from './data';
 // (run picker + header) but has its own entry. Runs that don't have map
 // data built yet will surface the fetch error inside the player.
 export function MapApp() {
-  const [runName, setRunName] = useState<string>(defaultMeta.name);
+  const [runName, setRunName] = useState<string>(defaultMeta?.name ?? '');
 
   return (
     <div className="dashboard dashboard-map">

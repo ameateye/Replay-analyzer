@@ -8,10 +8,11 @@ import { defaultMeta, loadRun, type Run } from './data';
 import { fmtTime } from './theme';
 
 export function App() {
-  const [runName, setRunName] = useState<string>(defaultMeta.name);
+  const [runName, setRunName] = useState<string>(defaultMeta?.name ?? '');
   const [run, setRun] = useState<Run | null>(null);
 
   useEffect(() => {
+    if (!runName) return;
     let cancelled = false;
     loadRun(runName).then(r => { if (!cancelled) setRun(r); });
     return () => { cancelled = true; };
@@ -55,7 +56,9 @@ export function App() {
             <PhaseAnalyzer run={run} phaseName={activePhase} />
           </RunOverview>
         ) : (
-          <div className="dashboard-loading">Loading {runName}…</div>
+          <div className="dashboard-loading">
+            {runName ? `Loading ${runName}…` : 'No runs available'}
+          </div>
         )}
       </div>
     </GameDataProvider>

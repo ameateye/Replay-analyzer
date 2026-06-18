@@ -65,7 +65,7 @@ export function attachContents(beltSegments, edges, durationTick, buffers = []) 
   }
 
   seedStatic(edges, lanes, bufNodes);
-  const { incoming, outgoing } = buildTransfers(edges, segById, bufNodes);
+  const { incoming, outgoing } = buildTransfers(edges, bufNodes);
   propagate(lanes, bufNodes, segById, incoming, outgoing);
 
   for (const s of beltSegments) {
@@ -143,7 +143,7 @@ function seedStock(node, item, series, durationTick) {
 //   'buf-in'  belt → buffer (both source lanes → buffer pool)
 //   'buf-out' buffer → belt (buffer outputs → one drop lane)
 //   'buf2buf' buffer → buffer (source outputs → target pool)
-function buildTransfers(edges, segById, bufNodes) {
+function buildTransfers(edges, bufNodes) {
   const incoming = new Map();   // dstKey → [{ src, mode, side?, outTile?, filter?, tb, tr }]
   const outgoing = new Map();   // srcKey → Set<dstKey>
   const add = (src, dst, rec) => {
@@ -160,21 +160,16 @@ function buildTransfers(edges, segById, bufNodes) {
     const outTile = e.to?.tile ? { x: e.to.tile.x, y: e.to.tile.y } : null;
 
     if (e.src === 'belt') {                     // belt source: walk its segment timeline
-      const fromTile = e.from.tile ? { x: e.from.tile.x, y: e.from.tile.y } : null;
       for (const fv of e.from.segs ?? []) {
         if (e.dst.belt) {                       // → belt
           for (const tv of e.to.segs ?? []) {
             if (fv.seg === tv.seg) continue;
             const iv = clip(life, [fv.tb, fv.tr ?? null], [tv.tb, tv.tr ?? null]);
             if (!iv) continue;
-            // Side preserved INTO a splitter: a feeder lands on the input half it sits
-            // behind (left input → splitter left lane), not the perpendicular near-lane.
-            let side = e.dst.belt;
-            const tgt = segById.get(tv.seg);
-            if (tgt?.kind === 'splitter') {
-              const half = splitterOutputSide(splitterStateAt(tgt, iv[0]), fromTile);
-              if (half) side = half;
-            }
+            // Feed INTO a splitter is LANE-PRESERVING: a collinear feed keeps 'both'
+            // (left→left, right→right — never collapsing the feeder's two lanes onto
+            // one input half); a genuine perpendicular sideload keeps its side.
+            const side = e.dst.belt;
             const mode = side === 'both' ? 'both' : 'side';
             add(fv.seg, tv.seg, { mode, side: side === 'both' ? null : side, outTile, filter, tb: iv[0], tr: iv[1] });
           }
@@ -328,25 +323,26 @@ function applySplitterFilterPerLane(pool, st, outTile) {
   if (!filter) return pool;
   const outSide = splitterOutputSide(st, outTile);
   if (!outSide) return pool;
-  const combined = combineLanes(pool);
+  // Lane-preserving: a splitter keeps each item on its lane (left input-lanes →
+  // left output-lanes, right → right). The filter routes the filtered ITEM to the
+  // priority output on whatever lane(s) it rode; the other output carries the rest.
   if (st.outputPriority === outSide) {
-    const only = combined.has(filter) ? new Map([[filter, combined.get(filter)]]) : new Map();
-    return { left: only, right: new Map(only) };
+    return { left: keepItem(pool.left, filter), right: keepItem(pool.right, filter) };
   }
-  combined.delete(filter);
-  return { left: combined, right: new Map(combined) };
+  return { left: dropItem(pool.left, filter), right: dropItem(pool.right, filter) };
 }
 
-// Union both lanes of a pool into one item → intervals map (intervals concatenated;
-// insertInterval merges any overlap on deposit). Source arrays are not mutated.
-function combineLanes(pool) {
+// Keep only `item` (with its intervals) from a lane map; empty if absent. Intervals
+// are copied so the source lane map is never mutated downstream.
+function keepItem(laneMap, item) {
   const out = new Map();
-  for (const m of [pool.left, pool.right]) {
-    for (const [item, ivs] of m) {
-      const cur = out.get(item);
-      out.set(item, cur ? cur.concat(ivs) : ivs.slice());
-    }
-  }
+  if (laneMap.has(item)) out.set(item, laneMap.get(item).slice());
+  return out;
+}
+// Everything EXCEPT `item` from a lane map (intervals copied).
+function dropItem(laneMap, item) {
+  const out = new Map();
+  for (const [k, v] of laneMap) if (k !== item) out.set(k, v.slice());
   return out;
 }
 
@@ -356,15 +352,6 @@ function mergeMaps(...maps) {
   const out = new Map();
   for (const m of maps) for (const [item, ivs] of m) for (const [a, b] of ivs) insertInterval(out, item, a, b);
   return out;
-}
-
-// The splitter state in effect at `tick` (last state whose tick ≤ tick).
-function splitterStateAt(seg, tick) {
-  const states = seg?.splitterStates;
-  if (!states || states.length === 0) return null;
-  let s = states[0];
-  for (const st of states) { if (st.tick <= tick) s = st; else break; }
-  return s;
 }
 
 // Restrict an item→intervals map to the items an inserter filter will move

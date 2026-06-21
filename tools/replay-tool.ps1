@@ -370,6 +370,28 @@ function Invoke-Extract {
     }
     Write-Host "Moved $($jsonFiles.Count) file(s) to $destDir" -ForegroundColor Green
 
+    # Post-collection gate: belt_neighbours reciprocity. The game keeps the belt
+    # graph reciprocal every tick, so any one-sided edge is a collector timing
+    # bug. Non-fatal here (the data is still extracted) but loud — and the gate
+    # script itself exits non-zero for standalone/CI use.
+    $layout = Join-Path $destDir 'entityLayout.json'
+    $checkScript = Join-Path $Config.dashboardPath 'scripts/diagnostics/check-belt-reciprocity.mjs'
+    if ((Test-Path -LiteralPath $layout) -and (Test-Path -LiteralPath $checkScript)) {
+        try {
+            Ensure-NodeOnPath -Config $Config
+            Write-Host ""
+            Write-Host "Belt reciprocity check:" -ForegroundColor Cyan
+            node $checkScript $destDir
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Reciprocity: PASS" -ForegroundColor Green
+            } else {
+                Write-Host "Reciprocity: FAIL (exit $LASTEXITCODE) - see above" -ForegroundColor Red
+            }
+        } catch {
+            Write-Host "Reciprocity check skipped: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($SaveToClean)) {
         Write-Host ""
         Invoke-Clean -SaveArg $SaveToClean -Config $Config

@@ -56,6 +56,18 @@ node dashboard/scripts/diagnostics/probe-events.mjs --unit 36
 node dashboard/scripts/diagnostics/probe-events.mjs --seg S-159 --from 139000 --to 140000
 ```
 
+## check-belt-reciprocity `<run-name | run-folder | path/to/entityLayout.json>` — post-collection gate
+Not a probe — a **pass/fail regression check** over the raw `entityLayout`. A
+physical feed edge `f->c` is reciprocal iff `f.beltOutputs` lists `c` AND
+`c.beltInputs` lists `f`; it checks both directions at every tick of each edge's
+shared lifetime. The game keeps `belt_neighbours` reciprocal every tick (verified
+headless), so any one-sided edge is a collector read/update-timing bug. Exits
+non-zero on any one-sided edge — `replay-tool extract` runs it automatically after
+each collection.
+```
+node dashboard/scripts/diagnostics/check-belt-reciprocity.mjs DS-2_02_56
+```
+
 ## probe-lib.mjs
 The layer loader (`loadLayers` → raw collectors + merged + events + segments +
 edges), the cross-layer `dossierLine` / `dossierBlock` and `divergences`, the

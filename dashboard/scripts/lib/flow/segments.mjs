@@ -260,6 +260,22 @@ export function reconcile(state, dirty, tick) {
   const { belts, segs, segOf } = state;
   const events = [];
   const touched = new Set();
+  // Fast-replace = a tile's belt swaps unit id; connectivity is usually unchanged.
+  // Rename the new unit into the old one's segment slot BEFORE the split check, so
+  // componentsWithin floods the TRUE post-replace graph. A tier upgrade / ghost->real
+  // bridges its own gap (no phantom split + heal-merge); a genuine restructure
+  // (belt<->UG, belt<->splitter, rotate) still splits/merges, because the new unit's
+  // own sameSegmentNeighbours now drive recut/merge (a UG jumps to its pair, a
+  // splitter returns no same-segment neighbour and so peels into its own segment).
+  for (const { old, nu } of state.pendingReplaces) {
+    const sid = segOf.get(old);
+    if (sid == null || !belts.has(nu)) continue;   // old unsegmented / new gone → normal flow handles it
+    const seg = segs.get(sid);
+    leave(state, seg, old, tick);
+    join(state, seg, nu, tick);
+    touched.add(sid);
+  }
+  state.pendingReplaces = [];
   for (const u of dirty) {
     const sid = segOf.get(u);
     if (belts.has(u)) { if (sid != null) touched.add(sid); }   // present → its seg may have been cut
@@ -299,9 +315,58 @@ export function advance(state, dirty, tick) {
 }
 
 // ── finalize ─────────────────────────────────────────────────
+// A reconcile tick runs its passes in fixed order — split (recut) BEFORE merge —
+// so a belt can peel off its segment in the split pass and be folded into a
+// neighbouring segment in the merge pass of the SAME tick. The peeled segment is
+// then born and retired at one tick (tr === tb): a throwaway intermediate that
+// never existed for any tick. New segments are therefore LOGGED only here, at the
+// end of the reconcile stage — and a zero-tick lifespan means "don't log it".
+// Each dropped intermediate's lineage is stitched through so survivors reference
+// each other directly: `X split→Z, Z merge→Y` collapses to the reclassification
+// `X split→Y` (a belt left X and joined Y). Live segments are never zero-tick, so
+// the run's settled partition (and every surviving segment id) is unchanged.
 export function finalize(state, _durationTick) {
   const all = [...state.segs.values(), ...state.retired].sort((a, b) => (a.tb - b.tb) || (a.id - b.id));
-  return { beltSegments: all.map(toRecord) };
+  const sid = (s) => `S-${s.id}`;
+  const zero = new Set(all.filter((s) => s.tr != null && s.tr === s.tb).map(sid));
+  if (zero.size === 0) return { beltSegments: all.map(toRecord) };
+
+  // Each zero-tick segment's two stitch ends: the parent it split from, and the
+  // segment it merged into. A zero-tick segment is born this tick, so it always
+  // loses its merge (oldest tb wins) and is never re-split — hence it appears
+  // only as a split CHILD and a merge SOURCE, and every stitched edge is a
+  // reclassification ('split'). Resolve through chains in case a stitch end is
+  // itself zero-tick.
+  const splitParent = new Map(), mergeTarget = new Map();
+  for (const s of all) {
+    if (!zero.has(sid(s))) continue;
+    const p = (s.pre ?? []).find((e) => e.id && e.outcome === 'split');
+    const m = (s.suc ?? []).find((e) => e.id && e.outcome === 'merge');
+    if (p) splitParent.set(sid(s), p.id);
+    if (m) mergeTarget.set(sid(s), m.id);
+  }
+  const resolve = (map, id) => {
+    const seen = new Set();
+    while (id && zero.has(id) && !seen.has(id)) { seen.add(id); id = map.get(id) ?? null; }
+    return id && zero.has(id) ? null : id;
+  };
+  const dedupe = (edges) => {
+    const seen = new Set(), out = [];
+    for (const e of edges) { const k = `${e.id}|${e.outcome}|${e.tick}`; if (!seen.has(k)) { seen.add(k); out.push(e); } }
+    return out;
+  };
+  const restitch = (edges, self, map) => dedupe(edges.flatMap((e) => {
+    if (!e.id || !zero.has(e.id)) return [e];
+    const to = resolve(map, e.id);
+    return to && to !== self ? [{ ...e, id: to, outcome: 'split' }] : [];
+  }));
+
+  const survivors = all.filter((s) => !zero.has(sid(s)));
+  for (const s of survivors) {
+    if (s.pre?.length) s.pre = restitch(s.pre, sid(s), splitParent);
+    if (s.suc?.length) s.suc = restitch(s.suc, sid(s), mergeTarget);
+  }
+  return { beltSegments: survivors.map(toRecord) };
 }
 
 function toRecord(s) {

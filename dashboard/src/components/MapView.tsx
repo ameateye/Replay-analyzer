@@ -497,6 +497,42 @@ const TICKS_PER_SECOND = 60;
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
+// Tick → editable "h:mm:ss(tt)" string. tt is the sub-second tick (t%60); the
+// h/mm/ss come from floor(t/60). This is the exact-position format the jump
+// input round-trips through parseTimeToTick.
+function fmtTimeTick(tick: number): string {
+  const t = Math.max(0, Math.round(tick));
+  const tt = t % TICKS_PER_SECOND;
+  const total = Math.floor(t / TICKS_PER_SECOND);
+  const h = Math.floor(total / 3600);
+  const mm = Math.floor((total % 3600) / 60);
+  const ss = total % 60;
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${h}:${pad(mm)}:${pad(ss)}(${pad(tt)})`;
+}
+
+// Parse a manually-typed position into an integer tick. Accepts "ss", "mm:ss",
+// or "h:mm:ss", with an optional sub-second tick as a "(tt)" suffix or ".tt"
+// decimal. Returns null on anything unparseable so the caller can ignore it.
+function parseTimeToTick(raw: string): number | null {
+  let body = raw.trim();
+  if (!body) return null;
+  let tt = 0;
+  const paren = body.match(/\((\d{1,2})\)$/);
+  const dot = body.match(/\.(\d{1,2})$/);
+  if (paren) { tt = Number(paren[1]); body = body.slice(0, paren.index).trim(); }
+  else if (dot) { tt = Number(dot[1]); body = body.slice(0, dot.index).trim(); }
+  const parts = body.split(':').map(p => p.trim());
+  if (parts.length > 3 || parts.some(p => !/^\d+$/.test(p))) return null;
+  const nums = parts.map(Number);
+  let h = 0, m = 0, sec = 0;
+  if (nums.length === 1) [sec] = nums;
+  else if (nums.length === 2) [m, sec] = nums;
+  else [h, m, sec] = nums;
+  if (tt > 59 || sec > 59 || m > 59) return null;
+  return (h * 3600 + m * 60 + sec) * TICKS_PER_SECOND + tt;
+}
+
 // Factorio 2.0 16-way direction (0=N, 4=E, 8=S, 12=W) → compass label.
 // Splitter/inserter `dir` and per-tile belt `direction` share this encoding.
 const DIR_LABELS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -666,6 +702,10 @@ export function MapView({
   const [tick, setTick] = useState(initialTick);
   const [playing, setPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(120);
+  // Jump-to-time input draft. null ↔ not editing (the field shows the live
+  // formatted tick); a string ↔ the user is typing, so we leave their text
+  // untouched until they commit (Enter/blur) or cancel (Escape).
+  const [timeDraft, setTimeDraft] = useState<string | null>(null);
 
   type VB = { x: number; y: number; w: number; h: number };
   const [vb, setVb] = useState<VB | null>(null);
@@ -1715,6 +1755,22 @@ export function MapView({
   const totalMin = ticksToMin(data.durationTick);
   const curMin = ticksToMin(tick);
 
+  // Fine stepping: pause and nudge the (integer-snapped) tick by `delta`,
+  // clamped to the run. Used by the −1s / −1t / +1t / +1s buttons.
+  const stepTick = (delta: number) => {
+    setPlaying(false);
+    setTick(prev => clamp(Math.round(prev) + delta, 0, data.durationTick));
+  };
+  // Commit the jump-to-time field: parse the draft, scrub there if valid, then
+  // drop back to live-display mode. An unparseable draft is silently discarded.
+  const commitTimeDraft = () => {
+    if (timeDraft != null) {
+      const t = parseTimeToTick(timeDraft);
+      if (t != null) { setPlaying(false); setTick(clamp(t, 0, data.durationTick)); }
+    }
+    setTimeDraft(null);
+  };
+
   return (
     <div className="run-map-player">
       <div className="run-map-header">
@@ -1734,6 +1790,16 @@ export function MapView({
             onClick={() => setPlaying(p => !p)}
             aria-label={playing ? 'Pause' : 'Play'}
           >{playing ? '❚❚' : '▶'}</button>
+          <div className="run-map-step-group">
+            <button className="run-map-btn run-map-step" onClick={() => stepTick(-TICKS_PER_SECOND)}
+                    title="Back 1 second" aria-label="Back 1 second">−1s</button>
+            <button className="run-map-btn run-map-step" onClick={() => stepTick(-1)}
+                    title="Back 1 tick" aria-label="Back 1 tick">−1t</button>
+            <button className="run-map-btn run-map-step" onClick={() => stepTick(1)}
+                    title="Forward 1 tick" aria-label="Forward 1 tick">+1t</button>
+            <button className="run-map-btn run-map-step" onClick={() => stepTick(TICKS_PER_SECOND)}
+                    title="Forward 1 second" aria-label="Forward 1 second">+1s</button>
+          </div>
           <input
             className="run-map-slider"
             type="range"
@@ -1743,6 +1809,21 @@ export function MapView({
             value={tick}
             style={{ ['--p' as never]: `${(tick / data.durationTick) * 100}%` }}
             onChange={e => { setTick(Number(e.target.value)); setPlaying(false); }}
+          />
+          <input
+            className="run-map-time-input"
+            type="text"
+            value={timeDraft ?? fmtTimeTick(tick)}
+            title="Jump to time — h:mm:ss or h:mm:ss(tt); Enter to go"
+            aria-label="Jump to time"
+            spellCheck={false}
+            onChange={e => setTimeDraft(e.target.value)}
+            onFocus={e => { setTimeDraft(fmtTimeTick(tick)); e.target.select(); }}
+            onBlur={commitTimeDraft}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { commitTimeDraft(); e.currentTarget.blur(); }
+              else if (e.key === 'Escape') { setTimeDraft(null); e.currentTarget.blur(); }
+            }}
           />
           <select
             className="run-map-speed"

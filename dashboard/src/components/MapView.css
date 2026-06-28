@@ -72,6 +72,32 @@
   color: #f9b44b;                 /* COLORS.accentHot */
   font-size: 14px;
 }
+.run-map-step-group {
+  display: inline-flex;
+  gap: 2px;
+}
+.run-map-step {
+  min-width: 30px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.run-map-time-input {
+  width: 96px;
+  appearance: none;
+  background: #3a3a3a;
+  color: #ffe6c0;
+  border: 1px solid #161616;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.run-map-time-input:focus {
+  outline: none;
+  border-color: #e39827;
+}
 .run-map-slider {
   flex: 1;
   appearance: none;

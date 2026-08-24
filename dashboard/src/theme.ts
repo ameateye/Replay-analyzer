@@ -29,6 +29,13 @@ export const COLORS = {
   accentWarm: '#f1be64',
   accentStrong: '#a46200',
 
+  // Fixed time markers drawn across a production row. Green is the one hue no
+  // chart series here uses (teal, blue, gray, red, purple, yellow), so the
+  // marker never reads as data; the lighter tone is for the caption, which has
+  // to stay legible where it crosses a saturated area fill.
+  marker: '#3ddc84',
+  markerText: '#8ff5bb',
+
   // Lab-saturation chart series — bumped for dark-bg legibility
   potentialFill: '#1a3845',
   potentialLine: '#9ad1ea',

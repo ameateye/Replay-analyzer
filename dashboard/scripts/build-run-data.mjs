@@ -21,6 +21,7 @@ import { computePhases, computeRocketLaunchTick } from './phase-boundaries.mjs';
 import { buildManualGathering } from './manual-gathering-prep.mjs';
 import { buildProductionCube } from './production-cube-prep.mjs';
 import { buildStocks } from './stocks-prep.mjs';
+import { buildRocketSupply } from './rocket-supply-prep.mjs';
 import { buildMiners } from './miners-prep.mjs';
 import { buildMapData } from './map-prep.mjs';
 import { buildMergedEntities } from './lib/layout/merge-entities.mjs';
@@ -104,6 +105,7 @@ const manualGathering = burnerWidgetXMaxTick != null
 // docs/concepts/per_run_data_redesign.md.
 const production = buildProductionCube(runDir, phases, rocketLaunchTick);
 const stocks = buildStocks(runDir, rocketLaunchTick);
+const rocketSupply = buildRocketSupply(runDir, rocketLaunchTick);
 
 // Build the lossless merged-entity stream once and share it with map-prep
 // and flow-prep so both consume the same upstream slice.
@@ -137,6 +139,7 @@ const output = {
   manualGathering,
   production,
   stocks,
+  rocketSupply,
   flow,
 };
 
@@ -172,6 +175,17 @@ if (manualGathering) {
   let totalEvents = 0;
   for (const g of stocks.groups) totalEvents += g.ticks.length;
   console.log(`  stocks: ${stocks.groups.length} groups (${bufN} buffer + ${stocks.groups.length - bufN} inventory, ~${totalEvents} change events) across ${items.size} item(s) (period=${stocks.period})`);
+}
+if (rocketSupply) {
+  const per = rocketSupply.items
+    .map(r => `${r.item} ready=${r.readyMin?.toFixed(1) ?? '—'}m finished=${r.finishedMin?.toFixed(1) ?? '—'}m (spare ${Math.round(r.surplus)})`)
+    .join(' · ');
+  console.log(`  rocket supply: need ${rocketSupply.requirement}/item · `
+    + `ready ${rocketSupply.readyMin?.toFixed(2) ?? '—'} min (${rocketSupply.bindingItem ?? '—'}) · `
+    + `finished ${rocketSupply.finishedMin?.toFixed(2) ?? '—'} min (${rocketSupply.bindingFinishedItem ?? '—'})`);
+  console.log(`    ${per}`);
+  console.log(`    productivity: ${rocketSupply.grantedCrafts} granted crafts on competing recipes `
+    + `· worst craft residual ${rocketSupply.worstCraftResidual}`);
 }
 if (flow) {
   console.log(`  flow: ${flow.summary.beltSegmentCount} belt segments (${JSON.stringify(flow.summary.segmentsByKind)})`);

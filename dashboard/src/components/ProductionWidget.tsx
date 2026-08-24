@@ -112,6 +112,10 @@ type Props = {
   // overrides to "working" / "built" since the same renderer is reused
   // for drill counts.
   twoLineLabels?: { primary: string; secondary: string };
+  // Optional vertical time marker drawn across the row (e.g. the tick this
+  // item's rocket supply is fully funded). Spans the full row height and
+  // carries its own caption, so each row can mark a different moment.
+  marker?: { minute: number; label: string };
 };
 
 const bisectMinute = bisector<number, number>(m => m).left;
@@ -139,6 +143,7 @@ export function ProductionRow({
   componentMeta,
   headlineOverride,
   twoLineLabels,
+  marker,
 }: Props) {
   const gameData = useGameData();
   const lookupMeta = recipeMeta(gameData, recipe.recipe);
@@ -381,6 +386,9 @@ export function ProductionRow({
         {/* Brushed time-window band. */}
         {sel && renderSelectionBand(sel, xScale, innerW, rowH)}
 
+        {/* Fixed time marker (drawn over the series, under the crosshair). */}
+        {marker && renderMarker(marker, xScale, innerW, rowH)}
+
         {/* Compact y-axis tick: max value at top */}
         <text
           x={-6}
@@ -446,6 +454,52 @@ function renderSelectionBand(
       <rect x={a} y={0} width={Math.max(0, b - a)} height={rowH} fill={COLORS.textStrong} fillOpacity={0.12} />
       <line x1={a} x2={a} y1={0} y2={rowH} stroke={COLORS.textStrong} strokeWidth={1} strokeOpacity={0.7} />
       <line x1={b} x2={b} y1={0} y2={rowH} stroke={COLORS.textStrong} strokeWidth={1} strokeOpacity={0.7} />
+    </g>
+  );
+}
+
+// Vertical accent line at a fixed minute, with its caption tucked inside the
+// plot. The caption flips to the left of the line when the marker lands near
+// the right edge — which is the common case, since rocket supply tends to
+// close out only minutes before launch.
+function renderMarker(
+  marker: { minute: number; label: string },
+  xScale: ScaleLinear<number, number>,
+  innerW: number,
+  rowH: number,
+) {
+  const x = xScale(marker.minute);
+  if (!Number.isFinite(x) || x < 0 || x > innerW) return null;
+  const flip = x > innerW - 92;
+  return (
+    <g pointerEvents="none">
+      <line
+        x1={x}
+        x2={x}
+        y1={0}
+        y2={rowH}
+        stroke={COLORS.marker}
+        strokeWidth={1.5}
+        strokeDasharray="5 3"
+      />
+      <path d={`M${x - 4} 0 L${x + 4} 0 L${x} 5 Z`} fill={COLORS.marker} />
+      {/* Stroke-behind-fill halo: the caption sits at the top of the plot,
+          which on a saturated row lands on bright cyan area fill. */}
+      <text
+        x={flip ? x - 6 : x + 6}
+        y={9}
+        textAnchor={flip ? 'end' : 'start'}
+        dominantBaseline="hanging"
+        fontFamily={FONT}
+        fontSize={9.5}
+        fill={COLORS.markerText}
+        stroke={COLORS.surface}
+        strokeWidth={3}
+        strokeOpacity={0.85}
+        paintOrder="stroke"
+      >
+        {marker.label}
+      </text>
     </g>
   );
 }

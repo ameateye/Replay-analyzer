@@ -61,6 +61,44 @@ export type StocksDataset = {
   groups: StocksGroup[];
 };
 
+// ---------- Rocket supply ----------
+
+// When each rocket-part input stops being what the launch is waiting for —
+// see dashboard/scripts/rocket-supply-prep.mjs for the ledger behind it.
+// `readyTick` = net banked stock holds at the requirement from here on;
+// `finishedTick` = cumulative production covers the requirement plus every
+// competing craft the run ever makes. `shortfall` is the residual when the
+// ledger closes a hair under the requirement on a run that made exactly
+// enough; the thresholds fall back to the net reached at launch.
+export type RocketSupplyItem = {
+  item: string;
+  readyTick: number | null;
+  readyMin: number | null;
+  finishedTick: number | null;
+  finishedMin: number | null;
+  produced: number;
+  consumedOther: number;
+  surplus: number;
+  shortfall: number;
+  consumers: Record<string, number>;
+};
+
+export type RocketSupply = {
+  requirement: number;
+  partsRequired: number;
+  itemsPerPart: number;
+  siloProductivity: number;
+  readyTick: number | null;
+  readyMin: number | null;
+  bindingItem: string | null;
+  finishedTick: number | null;
+  finishedMin: number | null;
+  bindingFinishedItem: string | null;
+  grantedCrafts: number;
+  worstCraftResidual: number;
+  items: RocketSupplyItem[];
+};
+
 // ---------- Miners ----------
 
 // Lifted, statuses-stripped miner list — see dashboard/scripts/miners-prep.mjs.

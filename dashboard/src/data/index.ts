@@ -21,6 +21,7 @@ export type Run = {
   manualGathering: any;
   production: any;
   stocks: any;
+  rocketSupply: any;
   flow: any;
   smelting: any;
 };

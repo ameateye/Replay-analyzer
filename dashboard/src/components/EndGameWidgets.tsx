@@ -9,12 +9,12 @@ import { scaleLinear } from '@visx/scale';
 import { AxisBottom } from '@visx/axis';
 import { range } from 'd3-array';
 import type { Run } from '../data';
-import { COLORS, FONT, fmtTimeNoSec } from '../theme';
+import { COLORS, FONT, fmtTime, fmtTimeNoSec } from '../theme';
 import { ProductionRow, type ProductionMode } from './ProductionWidget';
 import { ChartTooltip, type TooltipState } from './Tooltip';
 import { useGameData } from '../server/GameDataContext';
 import { buildRecipeRow } from '../lib/recipeRow';
-import type { ProductionCube, StocksDataset } from '../lib/runDatasets';
+import type { ProductionCube, RocketSupply, StocksDataset } from '../lib/runDatasets';
 import './EndGameWidgets.css';
 
 const W = 1500;
@@ -82,6 +82,19 @@ export function EndGameWidgets({ run }: { run: Run }) {
     [cube, stocks, gameData, gridTicks],
   );
 
+  // Rocket-supply markers, keyed by recipe — the three rocket-part inputs are
+  // named after the recipe that makes them, so the row lookup is direct. Runs
+  // built before the prep existed simply carry no markers.
+  const supply = run.rocketSupply as RocketSupply | undefined;
+  const markers = useMemo(() => {
+    const out = new Map<string, { minute: number; label: string }>();
+    for (const r of supply?.items ?? []) {
+      if (r.finishedMin == null) continue;
+      out.set(r.item, { minute: r.finishedMin, label: `finished ${fmtTime(r.finishedMin)}` });
+    }
+    return out;
+  }, [supply]);
+
   const innerW = W - MARGIN_LEFT - MARGIN_RIGHT;
 
   // X scale must match the run-overview chart exactly: [0, durationMin] →
@@ -142,6 +155,7 @@ export function EndGameWidgets({ run }: { run: Run }) {
                   totalW={W}
                   containerRef={containerRef}
                   setTooltip={setTooltip}
+                  marker={markers.get(r.recipe)}
                 />
               </Group>
             );

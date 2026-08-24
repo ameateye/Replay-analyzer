@@ -24,9 +24,11 @@ const W = 1500;
 // reserved even though end-game has no legend, to keep innerW identical.
 const MARGIN_LEFT = 120;
 const MARGIN_RIGHT = 230;
-const TOP_PAD = 8;
+// Rows are spaced wide enough for a supply marker's caption to sit in the gap
+// above its row instead of over the series.
+const TOP_PAD = 13;
 const ROW_H = 78;
-const ROW_GAP = 6;
+const ROW_GAP = 14;
 const X_AXIS_H = 32;
 
 const TABS: { mode: ProductionMode; label: string }[] = [

@@ -458,10 +458,11 @@ function renderSelectionBand(
   );
 }
 
-// Vertical accent line at a fixed minute, with its caption tucked inside the
-// plot. The caption flips to the left of the line when the marker lands near
-// the right edge — which is the common case, since rocket supply tends to
-// close out only minutes before launch.
+// Vertical accent line at a fixed minute, with its caption sitting in the gap
+// above the plot rather than on top of the series. The caption flips to the
+// left of the line when the marker lands near the right edge — which is the
+// common case, since rocket supply tends to close out only minutes before
+// launch. Callers must leave ~12px of headroom above the row for it.
 function renderMarker(
   marker: { minute: number; label: string },
   xScale: ScaleLinear<number, number>,
@@ -483,13 +484,12 @@ function renderMarker(
         strokeDasharray="5 3"
       />
       <path d={`M${x - 4} 0 L${x + 4} 0 L${x} 5 Z`} fill={COLORS.marker} />
-      {/* Stroke-behind-fill halo: the caption sits at the top of the plot,
-          which on a saturated row lands on bright cyan area fill. */}
+      {/* Stroke-behind-fill halo: the caption clears the plot, but its
+          descenders can still graze the row above on a saturated fill. */}
       <text
         x={flip ? x - 6 : x + 6}
-        y={9}
+        y={-3}
         textAnchor={flip ? 'end' : 'start'}
-        dominantBaseline="hanging"
         fontFamily={FONT}
         fontSize={9.5}
         fill={COLORS.markerText}
